@@ -1,0 +1,40 @@
+// .crew.rc — crew workflow configuration.
+// Written by /crew:adjust; read at the start of every crew run by /crew:run,
+// /crew:pulls, and every dispatched agent. Re-run /crew:adjust to keep it current.
+// `none` means the project genuinely has no such value.
+{
+  "$schema": "./.crew.schema.json",
+  "config": {
+    "repo": "Pekile/geezer-marketing",
+    "test-cmd": "npm test",
+    "lint-cmd": "npm run typecheck",
+    "build-cmd": "npm run build",
+    "e2e-cmd": "none",
+    "e2e-framework": "none",
+    "agent-ready-label": "agent-ready",
+    "ui-label": "ui",
+    "instructions-label": "instructions",
+    "planned-label": "agent-planned",
+    "epic-label": "epic",
+    "feature-label-prefix": "feature:",
+    "review-followup-label": "review-followup",
+    "findings-assignee": "Pekile",
+    "mr-reviewer": "Pekile",
+    "board": "none",
+    "priority-field": "none",
+    "priority-field-id": "none",
+    "status-todo": "TODO",
+    "status-in-progress": "In progress",
+    "status-in-review": "In review",
+    "status-blocked": "Blocked",
+    "status-done": "Done",
+    "branch-convention": "crew/<issue#>-<slug>",
+    "base-branch": "main",
+    "merge-method": "squash",
+    "worktree-layout": "bare-clone",
+    "start-cmd": "npm run dev",
+    "readiness-check": "http://localhost:3000/",
+    "port": "3000",
+    "isolation-scheme": "PORT = 3000 + (issue# mod 50)"
+  }
+}
