@@ -35,6 +35,15 @@
     "start-cmd": "npm run dev",
     "readiness-check": "http://localhost:3000/",
     "port": "3000",
-    "isolation-scheme": "PORT = 3000 + (issue# mod 50)"
+    "isolation-scheme": "PORT = 3000 + (issue# mod 50)",
+    "crew-identity": {
+      "identity-mode": "github-app",
+      "app-id": "4172557",
+      "installation-id": "143268052",
+      "private-key-path": "~/.config/crew/crew.pem",
+      "token-helper": "~/.config/crew/gh-token.sh",
+      "git-author-name": "geezer-crew[bot]",
+      "git-author-email": "297840323+geezer-crew[bot]@users.noreply.github.com"
+    }
   }
 }
