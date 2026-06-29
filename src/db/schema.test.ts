@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { getTableColumns, getTableName } from 'drizzle-orm'
+import {
+  createTableRelationsHelpers,
+  getTableColumns,
+  getTableName,
+} from 'drizzle-orm'
+import { getTableConfig } from 'drizzle-orm/pg-core'
 import {
   campaignSends,
+  campaignSendsRelations,
   campaigns,
+  campaignsRelations,
   channelEnum,
   sendStatusEnum,
 } from './schema.js'
@@ -45,6 +52,28 @@ describe('db schema', () => {
     const cols = getTableColumns(campaignSends)
     // The FK column carries the same SQL type as campaigns.id (serial -> integer).
     expect(cols.campaignId.columnType).toBe('PgInteger')
+  })
+
+  it('declares a foreign key from campaign_sends.campaign_id to campaigns.id', () => {
+    const { foreignKeys } = getTableConfig(campaignSends)
+    expect(foreignKeys).toHaveLength(1)
+    const ref = foreignKeys[0].reference()
+    expect(ref.columns.map((c) => c.name)).toEqual(['campaign_id'])
+    expect(ref.foreignColumns.map((c) => c.name)).toEqual(['id'])
+    expect(getTableName(ref.foreignTable)).toBe('campaigns')
+  })
+
+  it('exposes the campaign->sends relationship in both directions', () => {
+    // campaigns has many sends; campaign_sends belongs to one campaign.
+    const campaignFields = campaignsRelations.config(
+      createTableRelationsHelpers(campaigns),
+    )
+    expect(Object.keys(campaignFields)).toContain('sends')
+
+    const sendFields = campaignSendsRelations.config(
+      createTableRelationsHelpers(campaignSends),
+    )
+    expect(Object.keys(sendFields)).toContain('campaign')
   })
 
   it('exposes the channel enum with exactly email, sms, whatsapp, viber', () => {
