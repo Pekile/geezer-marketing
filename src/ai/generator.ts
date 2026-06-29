@@ -8,6 +8,7 @@ export interface CampaignCopy {
   email: { subject: string; body: string }
   sms: { message: string }
   whatsapp: { message: string }
+  viber: { message: string }
 }
 
 export async function generateCampaignCopy(
@@ -55,8 +56,15 @@ Pišeš personalizovane marketinške poruke na srpskom jeziku. Ton je prijatan, 
             },
             required: ['message'],
           },
+          viber: {
+            type: 'object',
+            properties: {
+              message: { type: 'string', description: 'Viber message, friendly tone, 2-3 sentences, emojis OK' },
+            },
+            required: ['message'],
+          },
         },
-        required: ['email', 'sms', 'whatsapp'],
+        required: ['email', 'sms', 'whatsapp', 'viber'],
       },
     }],
     tool_choice: { type: 'tool', name: 'campaign_copy' },
@@ -67,7 +75,7 @@ Opis: ${description}
 Kupac: ${customer.first_name} ${customer.last_name}
 Prethodne kupovine: ${orderHistory}
 
-Napiši personalizovanu kampanju.`,
+Napiši personalizovanu kampanju za email, SMS (max 160 karaktera), WhatsApp i Viber.`,
     }],
   })
 

@@ -1,6 +1,7 @@
 import { generateCampaignCopy } from './ai/generator.js'
 import { sendEmail } from './channels/email.js'
 import { sendSms } from './channels/sms.js'
+import { sendViber } from './channels/viber.js'
 import { sendWhatsApp } from './channels/whatsapp.js'
 import { getCustomerOrders, getOptedInCustomers } from './shopify/client.js'
 import type { ShopifyProduct } from './shopify/types.js'
@@ -17,19 +18,17 @@ export async function runCampaign(product: ShopifyProduct): Promise<void> {
       const copy = await generateCampaignCopy(product, customer, orders)
 
       const sends: Promise<void>[] = []
+      const emailConsented = customer.email_marketing_consent?.state === 'subscribed'
+      const smsConsented = customer.sms_marketing_consent?.state === 'subscribed'
 
-      if (customer.email_marketing_consent?.state === 'subscribed') {
+      if (emailConsented) {
         sends.push(sendEmail(customer.email, copy.email.subject, copy.email.body))
       }
 
-      if (customer.phone && customer.sms_marketing_consent?.state === 'subscribed') {
+      if (customer.phone && smsConsented) {
         sends.push(sendSms(customer.phone, copy.sms.message))
-      }
-
-      // WhatsApp: only if phone available and within Meta 24h session window
-      // Switch to template messages for outbound campaigns
-      if (customer.phone && customer.sms_marketing_consent?.state === 'subscribed') {
         sends.push(sendWhatsApp(customer.phone, copy.whatsapp.message))
+        sends.push(sendViber(customer.phone, copy.viber.message))
       }
 
       await Promise.all(sends)
