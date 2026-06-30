@@ -1,4 +1,5 @@
 {
+  "buildCommand": "",
   "functions": {
     "api/webhooks/shopify.ts": { "maxDuration": 60 }
   }
