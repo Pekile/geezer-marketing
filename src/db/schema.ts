@@ -57,3 +57,6 @@ export type Campaign = typeof campaigns.$inferSelect
 export type NewCampaign = typeof campaigns.$inferInsert
 export type CampaignSend = typeof campaignSends.$inferSelect
 export type NewCampaignSend = typeof campaignSends.$inferInsert
+
+/** A channel the send loop targets, as constrained by `channelEnum`. */
+export type Channel = (typeof channelEnum.enumValues)[number]

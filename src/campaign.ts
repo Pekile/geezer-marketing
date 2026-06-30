@@ -5,9 +5,22 @@ import { sendSms } from './channels/sms.js'
 import { sendViber } from './channels/viber.js'
 import { sendWhatsApp } from './channels/whatsapp.js'
 import { db } from './db/client.js'
-import { campaigns } from './db/schema.js'
+import { campaigns, campaignSends } from './db/schema.js'
+import type { Channel } from './db/schema.js'
 import { getCustomerOrders, getOptedInCustomers } from './shopify/client.js'
-import type { ShopifyProduct } from './shopify/types.js'
+import type { ShopifyCustomer, ShopifyProduct } from './shopify/types.js'
+
+/**
+ * A single channel send for one customer: the channel it targets and a thunk
+ * that performs the send. The senders fail by throwing and return no value, so
+ * each attempt is wrapped here and run on its own (see {@link attemptSends}) —
+ * one persisted `campaign_sends` row is written per attempt regardless of
+ * outcome, and one channel throwing never blocks the siblings.
+ */
+interface PlannedSend {
+  channel: Channel
+  send: () => Promise<void>
+}
 
 export async function runCampaign(product: ShopifyProduct): Promise<void> {
   const productId = product.id.toString()
@@ -27,7 +40,10 @@ export async function runCampaign(product: ShopifyProduct): Promise<void> {
     return
   }
 
-  await db.insert(campaigns).values({ productId, productTitle: product.title })
+  const [campaign] = await db
+    .insert(campaigns)
+    .values({ productId, productTitle: product.title })
+    .returning({ id: campaigns.id })
 
   console.log(`[campaign] Starting for: "${product.title}"`)
 
@@ -39,21 +55,33 @@ export async function runCampaign(product: ShopifyProduct): Promise<void> {
       const orders = await getCustomerOrders(customer.id)
       const copy = await generateCampaignCopy(product, customer, orders)
 
-      const sends: Promise<void>[] = []
+      const planned: PlannedSend[] = []
       const emailConsented = customer.email_marketing_consent?.state === 'subscribed'
       const smsConsented = customer.sms_marketing_consent?.state === 'subscribed'
 
       if (emailConsented) {
-        sends.push(sendEmail(customer.email, copy.email.subject, copy.email.body))
+        planned.push({
+          channel: 'email',
+          send: () => sendEmail(customer.email, copy.email.subject, copy.email.body),
+        })
       }
 
       if (customer.phone && smsConsented) {
-        sends.push(sendSms(customer.phone, copy.sms.message))
-        sends.push(sendWhatsApp(customer.phone, customer.first_name))
-        sends.push(sendViber(customer.phone, copy.viber.message))
+        planned.push({
+          channel: 'sms',
+          send: () => sendSms(customer.phone as string, copy.sms.message),
+        })
+        planned.push({
+          channel: 'whatsapp',
+          send: () => sendWhatsApp(customer.phone as string, customer.first_name),
+        })
+        planned.push({
+          channel: 'viber',
+          send: () => sendViber(customer.phone as string, copy.viber.message),
+        })
       }
 
-      await Promise.all(sends)
+      await attemptSends(campaign.id, customer, planned)
       console.log(`[campaign] ✓ ${customer.email ?? customer.id}`)
     } catch (err) {
       console.error(`[campaign] ✗ customer ${customer.id}:`, err)
@@ -61,4 +89,41 @@ export async function runCampaign(product: ShopifyProduct): Promise<void> {
   }
 
   console.log(`[campaign] Done for: "${product.title}"`)
+}
+
+/**
+ * Attempt every planned send for one customer individually and persist exactly
+ * one `campaign_sends` row per attempt. A send that resolves records a `sent`
+ * row; a send that throws records a `failed` row carrying the error message.
+ * Each attempt is isolated, so one channel failing never prevents the remaining
+ * channels for the customer from being attempted and logged.
+ */
+async function attemptSends(
+  campaignId: number,
+  customer: ShopifyCustomer,
+  planned: PlannedSend[],
+): Promise<void> {
+  const customerId = customer.id.toString()
+
+  for (const { channel, send } of planned) {
+    try {
+      await send()
+      await db.insert(campaignSends).values({
+        campaignId,
+        customerId,
+        channel,
+        status: 'sent',
+      })
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      console.error(`[campaign] ✗ ${channel} for customer ${customer.id}:`, err)
+      await db.insert(campaignSends).values({
+        campaignId,
+        customerId,
+        channel,
+        status: 'failed',
+        errorMessage,
+      })
+    }
+  }
 }
