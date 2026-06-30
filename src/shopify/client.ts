@@ -2,6 +2,7 @@ import config from '../config.js'
 import type { ShopifyCustomer, ShopifyOrder } from './types.js'
 
 const BASE = `https://${config.SHOPIFY_STORE_DOMAIN}/admin/api/2024-01`
+const CUSTOMER_FIELDS = 'id,first_name,last_name,email,phone,email_marketing_consent,sms_marketing_consent'
 
 async function shopifyFetch<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
@@ -11,24 +12,39 @@ async function shopifyFetch<T>(path: string): Promise<T> {
   return res.json() as Promise<T>
 }
 
+function parseNextPageInfo(linkHeader: string | null): string | null {
+  if (!linkHeader) return null
+  const match = linkHeader.match(/<[^>]*[?&]page_info=([^&>]+)[^>]*>;\s*rel="next"/)
+  return match ? match[1] : null
+}
+
 export async function getOptedInCustomers(): Promise<ShopifyCustomer[]> {
-  const customers: ShopifyCustomer[] = []
+  const all: ShopifyCustomer[] = []
   let pageInfo: string | null = null
 
   do {
-    const query = pageInfo
-      ? `/customers.json?limit=250&page_info=${pageInfo}&fields=id,first_name,last_name,email,phone,email_marketing_consent,sms_marketing_consent`
-      : `/customers.json?limit=250&fields=id,first_name,last_name,email,phone,email_marketing_consent,sms_marketing_consent`
+    const path = pageInfo
+      ? `/customers.json?limit=250&page_info=${pageInfo}&fields=${CUSTOMER_FIELDS}`
+      : `/customers.json?limit=250&fields=${CUSTOMER_FIELDS}`
 
-    const data = await shopifyFetch<{ customers: ShopifyCustomer[] }>(query)
-    customers.push(...data.customers)
-    pageInfo = null // Shopify REST cursor pagination requires Link header — simplified for now
+    const res = await fetch(`${BASE}${path}`, {
+      headers: { 'X-Shopify-Access-Token': config.SHOPIFY_ADMIN_API_TOKEN },
+    })
+    if (!res.ok) throw new Error(`Shopify customers: ${res.status} ${await res.text()}`)
+
+    const data = await res.json() as { customers: ShopifyCustomer[] }
+    all.push(...data.customers)
+    console.log(`[shopify] fetched ${all.length} customers so far...`)
+
+    pageInfo = parseNextPageInfo(res.headers.get('link'))
   } while (pageInfo)
 
-  return customers.filter(c =>
+  const opted = all.filter(c =>
     c.email_marketing_consent?.state === 'subscribed' ||
     c.sms_marketing_consent?.state === 'subscribed',
   )
+  console.log(`[shopify] ${all.length} total customers, ${opted.length} opted-in`)
+  return opted
 }
 
 export async function getCustomerOrders(customerId: number): Promise<ShopifyOrder[]> {
