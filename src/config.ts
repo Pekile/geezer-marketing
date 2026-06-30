@@ -3,7 +3,9 @@ import { z } from 'zod'
 
 const env = z.object({
   SHOPIFY_STORE_DOMAIN: z.string().min(1),
-  SHOPIFY_ADMIN_API_TOKEN: z.string().min(1),
+  SHOPIFY_ADMIN_API_TOKEN: z.string().default(''),
+  SHOPIFY_CLIENT_ID: z.string().default(''),
+  SHOPIFY_CLIENT_SECRET: z.string().default(''),
   SHOPIFY_WEBHOOK_SECRET: z.string().default(''),
   ANTHROPIC_API_KEY: z.string().default(''),
   RESEND_API_KEY: z.string().default(''),
