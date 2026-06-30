@@ -40,14 +40,12 @@ export async function runCampaign(product: ShopifyProduct): Promise<void> {
       const copy = await generateCampaignCopy(product, customer, orders)
 
       const sends: Promise<void>[] = []
-      const emailConsented = customer.email_marketing_consent?.state === 'subscribed'
-      const smsConsented = customer.sms_marketing_consent?.state === 'subscribed'
 
-      if (emailConsented) {
+      if (customer.email) {
         sends.push(sendEmail(customer.email, copy.email.subject, copy.email.body))
       }
 
-      if (customer.phone && smsConsented) {
+      if (customer.phone) {
         sends.push(sendSms(customer.phone, copy.sms.message))
         sends.push(sendWhatsApp(customer.phone, copy.whatsapp.message))
         sends.push(sendViber(customer.phone, copy.viber.message))

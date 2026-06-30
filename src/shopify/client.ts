@@ -71,12 +71,8 @@ export async function getOptedInCustomers(): Promise<ShopifyCustomer[]> {
     pageInfo = parseNextPageInfo(res.headers.get('link'))
   } while (pageInfo)
 
-  const opted = all.filter(c =>
-    c.email_marketing_consent?.state === 'subscribed' ||
-    c.sms_marketing_consent?.state === 'subscribed',
-  )
-  console.log(`[shopify] ${all.length} total customers, ${opted.length} opted-in`)
-  return opted
+  console.log(`[shopify] ${all.length} total customers`)
+  return all
 }
 
 export async function getCustomerOrders(customerId: number): Promise<ShopifyOrder[]> {
