@@ -49,7 +49,7 @@ export async function runCampaign(product: ShopifyProduct): Promise<void> {
 
       if (customer.phone && smsConsented) {
         sends.push(sendSms(customer.phone, copy.sms.message))
-        sends.push(sendWhatsApp(customer.phone, customer.first_name))
+        sends.push(sendWhatsApp(customer.phone, copy.whatsapp.message))
         sends.push(sendViber(customer.phone, copy.viber.message))
       }
 
