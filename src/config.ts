@@ -21,6 +21,7 @@ const env = z.object({
   TEST_RECIPIENT_EMAIL: z.string().default(''),
   TEST_RECIPIENT_PHONE: z.string().default(''),
   TEST_RECIPIENT_WHATSAPP: z.string().default(''),
+  DASHBOARD_SECRET: z.string().default(''),
 }).parse(process.env)
 
 export default env

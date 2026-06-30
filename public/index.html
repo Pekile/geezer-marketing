@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="sr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Geezer — Marketing Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0a;
+      --surface: #141414;
+      --border: #222;
+      --text: #f0f0f0;
+      --muted: #666;
+      --gold: #c9a84c;
+      --gold-dim: #8a6f2e;
+      --green: #22c55e;
+      --red: #ef4444;
+      --blue: #3b82f6;
+      --purple: #a855f7;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+    }
+
+    /* HEADER */
+    header {
+      border-bottom: 1px solid var(--border);
+      padding: 0 32px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .logo { font-size: 18px; font-weight: 700; letter-spacing: 0.12em; color: var(--gold); }
+    .logo span { color: var(--muted); font-weight: 400; font-size: 13px; margin-left: 12px; letter-spacing: 0; }
+    #refresh-btn {
+      background: none; border: 1px solid var(--border); color: var(--muted);
+      padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px;
+      transition: border-color 0.2s, color 0.2s;
+    }
+    #refresh-btn:hover { border-color: var(--gold); color: var(--gold); }
+
+    /* MAIN */
+    main { max-width: 1100px; margin: 0 auto; padding: 32px 24px; }
+
+    /* STATS */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 40px;
+    }
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px 24px;
+    }
+    .stat-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+    .stat-value { font-size: 32px; font-weight: 700; margin-top: 8px; line-height: 1; }
+    .stat-value.gold { color: var(--gold); }
+    .stat-value.green { color: var(--green); }
+
+    /* SECTION TITLE */
+    .section-title {
+      font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em;
+      color: var(--muted); margin-bottom: 16px;
+    }
+
+    /* CAMPAIGNS TABLE */
+    .campaigns { display: flex; flex-direction: column; gap: 10px; }
+
+    .campaign-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+    .campaign-card:hover { border-color: #333; }
+
+    .campaign-header {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      align-items: center;
+      gap: 24px;
+      padding: 16px 20px;
+      cursor: pointer;
+    }
+
+    .campaign-title { font-weight: 600; font-size: 14px; }
+    .campaign-date { color: var(--muted); font-size: 12px; margin-top: 3px; }
+
+    .campaign-sends { text-align: right; }
+    .sends-count { font-size: 22px; font-weight: 700; }
+    .sends-label { color: var(--muted); font-size: 11px; }
+
+    .success-badge {
+      padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600;
+      min-width: 52px; text-align: center;
+    }
+    .success-badge.high { background: rgba(34,197,94,0.15); color: var(--green); }
+    .success-badge.low { background: rgba(239,68,68,0.15); color: var(--red); }
+    .success-badge.none { background: rgba(102,102,102,0.15); color: var(--muted); }
+
+    /* CHANNEL BREAKDOWN */
+    .channel-breakdown {
+      border-top: 1px solid var(--border);
+      padding: 16px 20px;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+    .channel-item { display: flex; flex-direction: column; gap: 4px; }
+    .channel-name {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+    }
+    .channel-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+    .dot-email { background: var(--blue); }
+    .dot-sms { background: var(--green); }
+    .dot-whatsapp { background: #25d366; }
+    .dot-viber { background: var(--purple); }
+
+    .channel-stats { font-size: 13px; }
+    .ch-sent { color: var(--text); font-weight: 600; }
+    .ch-failed { color: var(--red); margin-left: 4px; font-size: 12px; }
+
+    /* EMPTY */
+    .empty {
+      text-align: center; padding: 80px 20px; color: var(--muted);
+    }
+    .empty-icon { font-size: 40px; margin-bottom: 16px; }
+    .empty-text { font-size: 16px; }
+    .empty-sub { font-size: 13px; margin-top: 8px; }
+
+    /* LOADING */
+    .loading { text-align: center; padding: 80px 20px; color: var(--muted); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      width: 24px; height: 24px; border: 2px solid var(--border);
+      border-top-color: var(--gold); border-radius: 50%;
+      animation: spin 0.8s linear infinite; margin: 0 auto 16px;
+    }
+
+    /* LOGIN */
+    #login-overlay {
+      position: fixed; inset: 0; background: var(--bg);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 100;
+    }
+    .login-box {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; padding: 40px; width: 340px;
+    }
+    .login-title { font-size: 20px; font-weight: 700; color: var(--gold); margin-bottom: 8px; }
+    .login-sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+    .login-input {
+      width: 100%; background: var(--bg); border: 1px solid var(--border);
+      color: var(--text); padding: 10px 14px; border-radius: 8px; font-size: 14px;
+      margin-bottom: 12px; outline: none;
+    }
+    .login-input:focus { border-color: var(--gold); }
+    .login-btn {
+      width: 100%; background: var(--gold); color: #000; border: none;
+      padding: 10px; border-radius: 8px; font-size: 14px; font-weight: 700;
+      cursor: pointer; letter-spacing: 0.04em;
+    }
+    .login-btn:hover { background: #d4b060; }
+    .login-error { color: var(--red); font-size: 12px; margin-top: 8px; display: none; }
+
+    .hidden { display: none !important; }
+
+    @media (max-width: 640px) {
+      .stats { grid-template-columns: repeat(2, 1fr); }
+      .channel-breakdown { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+
+<div id="login-overlay" style="display:none">
+  <div class="login-box">
+    <div class="login-title">GEEZER</div>
+    <div class="login-sub">Marketing Dashboard — unesite lozinku</div>
+    <input class="login-input" type="password" id="secret-input" placeholder="Lozinka..." />
+    <button class="login-btn" onclick="doLogin()">ULAZ</button>
+    <div class="login-error" id="login-error">Pogrešna lozinka.</div>
+  </div>
+</div>
+
+<header>
+  <div class="logo">GEEZER <span>Marketing Dashboard</span></div>
+  <button id="refresh-btn" onclick="loadData()">↻ Osveži</button>
+</header>
+
+<main>
+  <div class="stats">
+    <div class="stat-card">
+      <div class="stat-label">Kampanje</div>
+      <div class="stat-value gold" id="stat-campaigns">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Ukupno poslato</div>
+      <div class="stat-value" id="stat-sends">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Uspešno dostavljeno</div>
+      <div class="stat-value green" id="stat-sent">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Stopa uspešnosti</div>
+      <div class="stat-value gold" id="stat-rate">—</div>
+    </div>
+  </div>
+
+  <div class="section-title">Kampanje</div>
+  <div class="campaigns" id="campaigns-list">
+    <div class="loading">
+      <div class="spinner"></div>
+      Učitavanje...
+    </div>
+  </div>
+</main>
+
+<script>
+  const CHANNELS = ['email', 'sms', 'whatsapp', 'viber']
+  const CHANNEL_LABELS = { email: 'Email', sms: 'SMS', whatsapp: 'WhatsApp', viber: 'Viber' }
+
+  let secret = localStorage.getItem('geezer_secret') || ''
+
+  function formatDate(iso) {
+    return new Date(iso).toLocaleDateString('sr-RS', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+  }
+
+  function successClass(rate) {
+    if (rate === 0) return 'none'
+    return rate >= 80 ? 'high' : 'low'
+  }
+
+  function renderCampaigns(campaigns) {
+    const list = document.getElementById('campaigns-list')
+
+    if (!campaigns.length) {
+      list.innerHTML = `
+        <div class="empty">
+          <div class="empty-icon">📭</div>
+          <div class="empty-text">Nema kampanja</div>
+          <div class="empty-sub">Kampanje će se pojaviti kada Shopify pošalje webhook za novi proizvod.</div>
+        </div>`
+      return
+    }
+
+    list.innerHTML = campaigns.map(c => {
+      const rate = c.totalSends > 0 ? Math.round((c.totalSent / c.totalSends) * 100) : 0
+      const channelHtml = CHANNELS.map(ch => {
+        const d = c.byChannel[ch] || { sent: 0, failed: 0 }
+        return `
+          <div class="channel-item">
+            <div class="channel-name"><span class="channel-dot dot-${ch}"></span>${CHANNEL_LABELS[ch]}</div>
+            <div class="channel-stats">
+              <span class="ch-sent">${d.sent} poslato</span>
+              ${d.failed ? `<span class="ch-failed">${d.failed} greška</span>` : ''}
+              ${d.sent === 0 && d.failed === 0 ? `<span style="color:var(--muted)">—</span>` : ''}
+            </div>
+          </div>`
+      }).join('')
+
+      return `
+        <div class="campaign-card">
+          <div class="campaign-header" onclick="this.parentElement.querySelector('.channel-breakdown').classList.toggle('hidden')">
+            <div>
+              <div class="campaign-title">${c.productTitle || c.productId}</div>
+              <div class="campaign-date">${formatDate(c.createdAt)}</div>
+            </div>
+            <div class="campaign-sends">
+              <div class="sends-count">${c.totalSends}</div>
+              <div class="sends-label">poruka</div>
+            </div>
+            <div class="success-badge ${successClass(rate)}">${c.totalSends > 0 ? rate + '%' : '—'}</div>
+          </div>
+          <div class="channel-breakdown">${channelHtml}</div>
+        </div>`
+    }).join('')
+  }
+
+  async function loadData() {
+    const list = document.getElementById('campaigns-list')
+    list.innerHTML = '<div class="loading"><div class="spinner"></div>Učitavanje...</div>'
+
+    const headers = {}
+    if (secret) headers['x-secret'] = secret
+
+    try {
+      const res = await fetch('/api/dashboard', { headers })
+
+      if (res.status === 401) {
+        document.getElementById('login-overlay').style.display = 'flex'
+        list.innerHTML = ''
+        return
+      }
+
+      const data = await res.json()
+
+      document.getElementById('stat-campaigns').textContent = data.stats.totalCampaigns
+      document.getElementById('stat-sends').textContent = data.stats.totalSends
+      document.getElementById('stat-sent').textContent = data.stats.totalSent
+      document.getElementById('stat-rate').textContent = data.stats.successRate + '%'
+
+      renderCampaigns(data.campaigns)
+    } catch (e) {
+      list.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-text">Greška pri učitavanju</div></div>'
+    }
+  }
+
+  async function doLogin() {
+    const input = document.getElementById('secret-input').value.trim()
+    const err = document.getElementById('login-error')
+    err.style.display = 'none'
+
+    const res = await fetch('/api/dashboard', { headers: { 'x-secret': input } })
+    if (res.status === 401) {
+      err.style.display = 'block'
+      return
+    }
+
+    secret = input
+    localStorage.setItem('geezer_secret', secret)
+    document.getElementById('login-overlay').style.display = 'none'
+
+    const data = await res.json()
+    document.getElementById('stat-campaigns').textContent = data.stats.totalCampaigns
+    document.getElementById('stat-sends').textContent = data.stats.totalSends
+    document.getElementById('stat-sent').textContent = data.stats.totalSent
+    document.getElementById('stat-rate').textContent = data.stats.successRate + '%'
+    renderCampaigns(data.campaigns)
+  }
+
+  document.getElementById('secret-input')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') doLogin()
+  })
+
+  loadData()
+</script>
+</body>
+</html>
