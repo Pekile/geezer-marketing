@@ -18,8 +18,8 @@ export async function sendWhatsApp(to: string, firstName: string): Promise<void>
       to: recipient,
       content: {
         templateName: config.INFOBIP_WHATSAPP_TEMPLATE,
-        templateData: { body: { placeholders: [firstName] } },
-        language: 'en',
+        templateData: { body: { placeholders: [] } },
+        language: 'sr',
       },
     }],
   })
