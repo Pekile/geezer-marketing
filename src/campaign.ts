@@ -1,15 +1,28 @@
 import { eq } from 'drizzle-orm'
 import { generateCampaignCopy } from './ai/generator.js'
-import { sendEmail } from './channels/email.js'
-import { sendSms } from './channels/sms.js'
-import { sendViber } from './channels/viber.js'
-import { sendWhatsApp } from './channels/whatsapp.js'
 import { db } from './db/client.js'
 import { campaignSends, campaigns } from './db/schema.js'
 import { getCustomerOrders, getOptedInCustomers } from './shopify/client.js'
 import type { ShopifyProduct } from './shopify/types.js'
 
-async function logSend(
+/**
+ * One customer's generated copy, captured at draft time so the approval
+ * endpoint can dispatch the exact messages the owner reviewed. Serialised as
+ * JSON into `campaigns.copy`.
+ */
+export type CustomerCopy = {
+  customerId: string
+  firstName: string
+  email: string | null
+  phone: string | null
+  email_subject: string
+  email_body: string
+  sms: string
+  whatsapp: string
+  viber: string
+}
+
+export async function logSend(
   campaignId: number,
   customerId: string,
   channel: 'email' | 'sms' | 'whatsapp' | 'viber',
@@ -50,34 +63,39 @@ export async function runCampaign(product: ShopifyProduct): Promise<void> {
   const customers = await getOptedInCustomers()
   console.log(`[campaign] ${customers.length} customers`)
 
+  // Generate copy for every customer and collect it as a draft. No messages are
+  // sent here — the owner approves the draft via POST /api/approve, which is
+  // what actually dispatches the sends (see api/approve.ts).
+  const drafts: CustomerCopy[] = []
+
   for (const customer of customers) {
     const customerId = customer.id.toString()
     try {
       const orders = await getCustomerOrders(customer.id)
       const copy = await generateCampaignCopy(product, customer, orders)
 
-      const sends: Promise<void>[] = []
+      drafts.push({
+        customerId,
+        firstName: customer.first_name,
+        email: customer.email ?? null,
+        phone: customer.phone ?? null,
+        email_subject: copy.email.subject,
+        email_body: copy.email.body,
+        sms: copy.sms.message,
+        whatsapp: copy.whatsapp.message,
+        viber: copy.viber.message,
+      })
 
-      if (customer.email) {
-        sends.push(logSend(campaignId, customerId, 'email',
-          () => sendEmail(customer.email, copy.email.subject, copy.email.body)))
-      }
-
-      if (customer.phone) {
-        sends.push(logSend(campaignId, customerId, 'sms',
-          () => sendSms(customer.phone, copy.sms.message)))
-        sends.push(logSend(campaignId, customerId, 'whatsapp',
-          () => sendWhatsApp(customer.phone, copy.whatsapp.message)))
-        sends.push(logSend(campaignId, customerId, 'viber',
-          () => sendViber(customer.phone, copy.viber.message)))
-      }
-
-      await Promise.allSettled(sends)
-      console.log(`[campaign] ✓ ${customer.email ?? customerId}`)
+      console.log(`[campaign] ✓ copy ready for ${customer.email ?? customerId}`)
     } catch (err) {
       console.error(`[campaign] ✗ customer ${customerId}:`, err)
     }
   }
 
-  console.log(`[campaign] Done for: "${product.title}"`)
+  await db
+    .update(campaigns)
+    .set({ copy: JSON.stringify(drafts), status: 'draft' })
+    .where(eq(campaigns.id, campaignId))
+
+  console.log(`[campaign] Draft saved for: "${product.title}" — ${drafts.length} customers, awaiting approval`)
 }

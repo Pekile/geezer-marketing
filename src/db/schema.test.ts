@@ -20,10 +20,20 @@ describe('db schema', () => {
     expect(getTableName(campaigns)).toBe('campaigns')
     const cols = getTableColumns(campaigns)
     expect(Object.keys(cols)).toEqual(
-      expect.arrayContaining(['id', 'productId', 'productTitle', 'createdAt']),
+      expect.arrayContaining(['id', 'productId', 'productTitle', 'status', 'copy', 'createdAt']),
     )
     expect(cols.productId.notNull).toBe(true)
     expect(cols.productId.isUnique).toBe(true)
+  })
+
+  it('defines the approval columns on campaigns', () => {
+    const cols = getTableColumns(campaigns)
+    // status is required and defaults to 'draft' so a new campaign is never
+    // treated as already sent.
+    expect(cols.status.notNull).toBe(true)
+    expect(cols.status.default).toBe('draft')
+    // copy holds the serialised draft JSON and is nullable.
+    expect(cols.copy.notNull).toBe(false)
   })
 
   it('defines the campaign_sends table', () => {
