@@ -178,6 +178,16 @@
     .approve-btn:disabled { opacity: 0.6; cursor: default; }
     .approve-error { color: var(--red); font-size: 13px; }
 
+    /* DELETE button */
+    .delete-btn {
+      background: none; border: 1px solid transparent; color: var(--muted);
+      width: 28px; height: 28px; border-radius: 6px; cursor: pointer; font-size: 14px;
+      display: flex; align-items: center; justify-content: center;
+      transition: border-color 0.2s, color 0.2s, background 0.2s;
+      flex-shrink: 0;
+    }
+    .delete-btn:hover { border-color: var(--red); color: var(--red); background: rgba(239,68,68,0.08); }
+
     /* ERROR badge */
     .error-badge {
       padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 700;
@@ -393,7 +403,11 @@
     }
 
     list.innerHTML = campaigns.map(c => {
-      const isGenerating = needsGeneration(c)
+      // Also show spinner if we already triggered generation this session but the
+      // DB hasn't flipped to draft yet (e.g. user clicked Osveži mid-generation).
+      const isGeneratingInProgress = generationAttempted.has(c.id)
+        && c.status !== 'draft' && c.status !== 'sent' && c.status !== 'error'
+      const isGenerating = needsGeneration(c) || isGeneratingInProgress
       const isDraft = c.status === 'draft' && !!c.copy
       const rate = c.totalSends > 0 ? Math.round((c.totalSent / c.totalSends) * 100) : 0
       const channelHtml = CHANNELS.map(ch => {
@@ -446,6 +460,7 @@
               <div class="sends-label">poruka</div>
             </div>
             ${badgeHtml}
+            <button class="delete-btn" onclick="event.stopPropagation(); deleteCampaign(${c.id})" title="Obriši kampanju">✕</button>
           </div>
           ${detailHtml}
         </div>`
@@ -489,6 +504,20 @@
       if (err) err.textContent = e.message || 'Greška pri slanju.'
       btn.disabled = false
       btn.textContent = original
+    }
+  }
+
+  async function deleteCampaign(id) {
+    if (!confirm('Obrisati ovu kampanju?')) return
+    const headers = {}
+    if (secret) headers['x-secret'] = secret
+    try {
+      const res = await fetch('/api/delete?id=' + id, { method: 'DELETE', headers })
+      if (!res.ok) throw new Error('Greška pri brisanju.')
+      generationAttempted.delete(id)
+      await loadData()
+    } catch (e) {
+      alert(e.message || 'Greška pri brisanju.')
     }
   }
 
