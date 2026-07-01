@@ -49,7 +49,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const totalSent = stats.filter(s => s.status === 'sent').reduce((a, s) => a + Number(s.count), 0)
     const totalFailed = stats.filter(s => s.status === 'failed').reduce((a, s) => a + Number(s.count), 0)
 
-    return { ...c, totalSent, totalFailed, totalSends: totalSent + totalFailed, byChannel }
+    // `status` and `copy` are surfaced explicitly (not just via the spread) so
+    // the dashboard can render draft-vs-sent state and the copy preview, and so
+    // the contract survives any future narrowing of the campaign projection.
+    return {
+      ...c,
+      status: c.status,
+      copy: c.copy,
+      totalSent,
+      totalFailed,
+      totalSends: totalSent + totalFailed,
+      byChannel,
+    }
   })
 
   const totalSends = enriched.reduce((a, c) => a + c.totalSends, 0)
