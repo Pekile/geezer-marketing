@@ -60,47 +60,53 @@ export async function runCampaign(product: ShopifyProduct): Promise<void> {
   const campaignId = campaign.id
   console.log(`[campaign] Starting for: "${product.title}" (id=${campaignId})`)
 
-  const customers = await getOptedInCustomers()
-  console.log(`[campaign] ${customers.length} customers`)
+  try {
+    const customers = await getOptedInCustomers()
+    console.log(`[campaign] ${customers.length} customers`)
 
-  // Generate copy for all customers in parallel (20 at a time). Sequential
-  // generation at ~3s per Claude call would take 10+ minutes for a 200-customer
-  // list and blow the webhook's 300s waitUntil budget. 20 concurrent calls
-  // complete each batch in ~5s → 200 customers in ~50s.
-  const CONCURRENCY = 20
-  const drafts: CustomerCopy[] = []
+    // Generate copy for all customers in parallel (20 at a time).
+    const CONCURRENCY = 20
+    const drafts: CustomerCopy[] = []
 
-  for (let i = 0; i < customers.length; i += CONCURRENCY) {
-    const batch = customers.slice(i, i + CONCURRENCY)
-    const results = await Promise.allSettled(
-      batch.map(async customer => {
-        const customerId = customer.id.toString()
-        const orders = await getCustomerOrders(customer.id)
-        const copy = await generateCampaignCopy(product, customer, orders)
-        console.log(`[campaign] ✓ copy ready for ${customer.email ?? customerId}`)
-        return {
-          customerId,
-          firstName: customer.first_name,
-          email: customer.email ?? null,
-          phone: customer.phone ?? null,
-          email_subject: copy.email.subject,
-          email_body: copy.email.body,
-          sms: copy.sms.message,
-          whatsapp: copy.whatsapp.message,
-          viber: copy.viber.message,
-        } satisfies CustomerCopy
-      }),
-    )
-    for (const r of results) {
-      if (r.status === 'fulfilled') drafts.push(r.value)
-      else console.error('[campaign] ✗ copy failed:', r.reason)
+    for (let i = 0; i < customers.length; i += CONCURRENCY) {
+      const batch = customers.slice(i, i + CONCURRENCY)
+      const results = await Promise.allSettled(
+        batch.map(async customer => {
+          const customerId = customer.id.toString()
+          const orders = await getCustomerOrders(customer.id)
+          const copy = await generateCampaignCopy(product, customer, orders)
+          console.log(`[campaign] ✓ copy ready for ${customer.email ?? customerId}`)
+          return {
+            customerId,
+            firstName: customer.first_name,
+            email: customer.email ?? null,
+            phone: customer.phone ?? null,
+            email_subject: copy.email.subject,
+            email_body: copy.email.body,
+            sms: copy.sms.message,
+            whatsapp: copy.whatsapp.message,
+            viber: copy.viber.message,
+          } satisfies CustomerCopy
+        }),
+      )
+      for (const r of results) {
+        if (r.status === 'fulfilled') drafts.push(r.value)
+        else console.error('[campaign] ✗ copy failed:', r.reason)
+      }
     }
+
+    await db
+      .update(campaigns)
+      .set({ copy: JSON.stringify(drafts), status: 'draft' })
+      .where(eq(campaigns.id, campaignId))
+
+    console.log(`[campaign] Draft saved for: "${product.title}" — ${drafts.length} customers, awaiting approval`)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error(`[campaign] FATAL error for campaign ${campaignId}:`, err)
+    await db
+      .update(campaigns)
+      .set({ copy: JSON.stringify({ _error: msg }), status: 'error' })
+      .where(eq(campaigns.id, campaignId))
   }
-
-  await db
-    .update(campaigns)
-    .set({ copy: JSON.stringify(drafts), status: 'draft' })
-    .where(eq(campaigns.id, campaignId))
-
-  console.log(`[campaign] Draft saved for: "${product.title}" — ${drafts.length} customers, awaiting approval`)
 }
