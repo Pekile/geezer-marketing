@@ -1,23 +1,36 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // --- db client mock ---------------------------------------------------------
-// `existingRows` controls what the campaigns lookup returns: an empty array
-// means the product has no campaign yet; a non-empty array means it already
-// does and the run must be skipped.
 let existingRows: { id: number }[] = []
 const limit = vi.fn(async () => existingRows)
 const where = vi.fn(() => ({ limit }))
 const from = vi.fn(() => ({ where }))
 const select = vi.fn(() => ({ from }))
-// The insert appends a row to the same backing store the lookup reads, so a
-// later run for the same product genuinely observes what an earlier run wrote
-// — modelling the unique `product_id` row the real `campaigns` table holds.
-const insertReturning = vi.fn(async () => [{ id: existingRows.length }])
+
+// The campaigns insert appends to the backing store and returns its id.
+const insertReturning = vi.fn(async () => [{ id: existingRows.length + 1 }])
 const insertValues = vi.fn((_vals: unknown) => {
   existingRows.push({ id: existingRows.length + 1 })
   return { returning: insertReturning }
 })
-const insert = vi.fn(() => ({ values: insertValues }))
+
+function tableName(table: unknown): string {
+  const sym = Object.getOwnPropertySymbols(table as object).find(
+    s => s.description === 'drizzle:Name',
+  )
+  return sym ? String((table as Record<symbol, unknown>)[sym]) : String(table)
+}
+
+// campaign_sends rows written by logSend (used at approval time via api/approve.ts).
+const recordedSends: Array<{ channel: string; status: string; errorMessage?: string }> = []
+const sendValues = vi.fn(async (row: { channel: string; status: string; errorMessage?: string }) => {
+  recordedSends.push(row)
+})
+
+const insert = vi.fn((table: unknown) => {
+  if (tableName(table) === 'campaign_sends') return { values: sendValues }
+  return { values: insertValues }
+})
 
 // The draft store: runCampaign ends with db.update(...).set({copy,status}).where(...).
 const updateWhere = vi.fn(async () => undefined)
@@ -27,21 +40,23 @@ const update = vi.fn(() => ({ set: updateSet }))
 vi.mock('./db/client.js', () => ({
   db: {
     select: () => select(),
-    insert: () => insert(),
+    insert: (table: unknown) => insert(table),
     update: () => update(),
   },
 }))
 
-// --- collaborators mock -----------------------------------------------------
-const getOptedInCustomers = vi.fn(async (): Promise<unknown[]> => [])
-const getCustomerOrders = vi.fn(async (_id: number) => [])
+// --- channel sender mocks ---------------------------------------------------
+const sendEmail = vi.fn(async () => undefined)
+const sendSms = vi.fn(async () => undefined)
+const sendWhatsApp = vi.fn(async () => undefined)
+const sendViber = vi.fn(async () => undefined)
 
-vi.mock('./shopify/client.js', () => ({
-  getOptedInCustomers: () => getOptedInCustomers(),
-  getCustomerOrders: (id: number) => getCustomerOrders(id),
-}))
+vi.mock('./channels/email.js', () => ({ sendEmail: () => sendEmail() }))
+vi.mock('./channels/sms.js', () => ({ sendSms: () => sendSms() }))
+vi.mock('./channels/whatsapp.js', () => ({ sendWhatsApp: () => sendWhatsApp() }))
+vi.mock('./channels/viber.js', () => ({ sendViber: () => sendViber() }))
 
-// AI copy generator — return deterministic copy so the draft shape is testable.
+// --- copy generator mock ----------------------------------------------------
 const generateCampaignCopy = vi.fn(async () => ({
   email: { subject: 'Subj', body: 'Body' },
   sms: { message: 'sms text' },
@@ -53,17 +68,14 @@ vi.mock('./ai/generator.js', () => ({
   generateCampaignCopy: () => generateCampaignCopy(),
 }))
 
-// The four channel senders must never be called by runCampaign — sending only
-// happens at approval time (api/approve.ts).
-const sendEmail = vi.fn(async () => undefined)
-const sendSms = vi.fn(async () => undefined)
-const sendWhatsApp = vi.fn(async () => undefined)
-const sendViber = vi.fn(async () => undefined)
+// --- collaborators mock -----------------------------------------------------
+const getOptedInCustomers = vi.fn(async (): Promise<unknown[]> => [])
+const getCustomerOrders = vi.fn(async (_id: number) => [])
 
-vi.mock('./channels/email.js', () => ({ sendEmail: () => sendEmail() }))
-vi.mock('./channels/sms.js', () => ({ sendSms: () => sendSms() }))
-vi.mock('./channels/whatsapp.js', () => ({ sendWhatsApp: () => sendWhatsApp() }))
-vi.mock('./channels/viber.js', () => ({ sendViber: () => sendViber() }))
+vi.mock('./shopify/client.js', () => ({
+  getOptedInCustomers: () => getOptedInCustomers(),
+  getCustomerOrders: (id: number) => getCustomerOrders(id),
+}))
 
 import { runCampaign } from './campaign.js'
 import type { ShopifyProduct } from './shopify/types.js'
@@ -81,49 +93,38 @@ describe('runCampaign idempotency', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     existingRows = []
+    recordedSends.length = 0
   })
 
-  it('skips the campaign and sends nothing when the product already has a campaign', async () => {
+  it('skips the campaign when the product already has a campaign', async () => {
     existingRows = [{ id: 1 }]
 
     await runCampaign(product)
 
-    // Looked up by productId, found a row, returned early.
     expect(select).toHaveBeenCalledTimes(1)
     expect(insert).not.toHaveBeenCalled()
     expect(getOptedInCustomers).not.toHaveBeenCalled()
   })
 
-  it('inserts a campaign row and proceeds when the product is first-time', async () => {
+  it('inserts a campaign row and proceeds when first-time', async () => {
     existingRows = []
 
     await runCampaign(product)
 
     expect(select).toHaveBeenCalledTimes(1)
-    expect(insert).toHaveBeenCalledTimes(1)
-    expect(insertValues).toHaveBeenCalledWith({
-      productId: '12345',
-      productTitle: 'Geezer Tee',
-    })
-    // Proceeded into the existing send logic.
+    expect(insertValues).toHaveBeenCalledTimes(1)
+    expect(insertValues).toHaveBeenCalledWith({ productId: '12345', productTitle: 'Geezer Tee' })
     expect(getOptedInCustomers).toHaveBeenCalledTimes(1)
   })
 
-  it('re-delivering the same product creates no second record and sends nothing on the second run', async () => {
+  it('re-delivering the same product creates no second record on the second run', async () => {
     existingRows = []
 
-    // First delivery: records the product and runs the campaign.
     await runCampaign(product)
-    // Second delivery of the same webhook: the record from the first run is now
-    // present, so the run is skipped — no second insert, no further sends.
     await runCampaign(product)
 
-    // Two lookups (one per delivery), but exactly one record was ever inserted.
     expect(select).toHaveBeenCalledTimes(2)
-    expect(insert).toHaveBeenCalledTimes(1)
     expect(insertValues).toHaveBeenCalledTimes(1)
-    expect(existingRows).toHaveLength(1)
-    // The send loop ran for the first delivery only.
     expect(getOptedInCustomers).toHaveBeenCalledTimes(1)
   })
 })
@@ -132,6 +133,7 @@ describe('runCampaign draft behaviour', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     existingRows = []
+    recordedSends.length = 0
   })
 
   it('stores generated copy as a draft and never calls a send function', async () => {
@@ -148,8 +150,7 @@ describe('runCampaign draft behaviour', () => {
     expect(sendWhatsApp).not.toHaveBeenCalled()
     expect(sendViber).not.toHaveBeenCalled()
 
-    // The draft was persisted via a single update setting status='draft' and the
-    // serialised per-customer copy array.
+    // Draft persisted via a single update setting status='draft' and the copy JSON.
     expect(update).toHaveBeenCalledTimes(1)
     expect(updateSet).toHaveBeenCalledTimes(1)
     const arg = updateSet.mock.calls[0][0] as { status: string; copy: string }
