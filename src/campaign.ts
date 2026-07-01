@@ -63,32 +63,37 @@ export async function runCampaign(product: ShopifyProduct): Promise<void> {
   const customers = await getOptedInCustomers()
   console.log(`[campaign] ${customers.length} customers`)
 
-  // Generate copy for every customer and collect it as a draft. No messages are
-  // sent here — the owner approves the draft via POST /api/approve, which is
-  // what actually dispatches the sends (see api/approve.ts).
+  // Generate copy for all customers in parallel (20 at a time). Sequential
+  // generation at ~3s per Claude call would take 10+ minutes for a 200-customer
+  // list and blow the webhook's 300s waitUntil budget. 20 concurrent calls
+  // complete each batch in ~5s → 200 customers in ~50s.
+  const CONCURRENCY = 20
   const drafts: CustomerCopy[] = []
 
-  for (const customer of customers) {
-    const customerId = customer.id.toString()
-    try {
-      const orders = await getCustomerOrders(customer.id)
-      const copy = await generateCampaignCopy(product, customer, orders)
-
-      drafts.push({
-        customerId,
-        firstName: customer.first_name,
-        email: customer.email ?? null,
-        phone: customer.phone ?? null,
-        email_subject: copy.email.subject,
-        email_body: copy.email.body,
-        sms: copy.sms.message,
-        whatsapp: copy.whatsapp.message,
-        viber: copy.viber.message,
-      })
-
-      console.log(`[campaign] ✓ copy ready for ${customer.email ?? customerId}`)
-    } catch (err) {
-      console.error(`[campaign] ✗ customer ${customerId}:`, err)
+  for (let i = 0; i < customers.length; i += CONCURRENCY) {
+    const batch = customers.slice(i, i + CONCURRENCY)
+    const results = await Promise.allSettled(
+      batch.map(async customer => {
+        const customerId = customer.id.toString()
+        const orders = await getCustomerOrders(customer.id)
+        const copy = await generateCampaignCopy(product, customer, orders)
+        console.log(`[campaign] ✓ copy ready for ${customer.email ?? customerId}`)
+        return {
+          customerId,
+          firstName: customer.first_name,
+          email: customer.email ?? null,
+          phone: customer.phone ?? null,
+          email_subject: copy.email.subject,
+          email_body: copy.email.body,
+          sms: copy.sms.message,
+          whatsapp: copy.whatsapp.message,
+          viber: copy.viber.message,
+        } satisfies CustomerCopy
+      }),
+    )
+    for (const r of results) {
+      if (r.status === 'fulfilled') drafts.push(r.value)
+      else console.error('[campaign] ✗ copy failed:', r.reason)
     }
   }
 
