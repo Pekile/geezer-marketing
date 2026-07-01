@@ -22,6 +22,19 @@ export const campaigns = pgTable('campaigns', {
   id: serial('id').primaryKey(),
   productId: text('product_id').notNull().unique(),
   productTitle: text('product_title'),
+  /**
+   * Lifecycle of the campaign: `'draft'` once copy is generated and stored but
+   * before the owner approves, `'sent'` after the approval endpoint dispatches
+   * the messages. Defaults to `'draft'` so a freshly inserted campaign is never
+   * treated as already sent.
+   */
+  status: text('status').notNull().default('draft'),
+  /**
+   * JSON-serialised array of per-customer generated copy (see `CustomerCopy` in
+   * `src/campaign.ts`). Populated when the draft is created; nullable because a
+   * campaign row can exist before its copy has been generated.
+   */
+  copy: text('copy'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
 

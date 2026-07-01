@@ -4,7 +4,7 @@ import { infobipFetch, normalizePhone } from './infobip.js'
 // WhatsApp Business requires pre-approved templates for all outbound messages.
 // Free trial: sender=447860088970, template=test_whatsapp_template_en, fixed recipient only.
 // Production: register your own number + create Serbian marketing templates in Infobip.
-export async function sendWhatsApp(to: string, firstName: string): Promise<void> {
+export async function sendWhatsApp(to: string, message: string): Promise<void> {
   const recipient = config.TEST_RECIPIENT_WHATSAPP || normalizePhone(to)
 
   if (!config.INFOBIP_API_KEY || !config.INFOBIP_WHATSAPP_SENDER) {
@@ -18,8 +18,8 @@ export async function sendWhatsApp(to: string, firstName: string): Promise<void>
       to: recipient,
       content: {
         templateName: config.INFOBIP_WHATSAPP_TEMPLATE,
-        templateData: { body: { placeholders: [firstName] } },
-        language: 'en',
+        templateData: { body: { placeholders: [message] } },
+        language: 'sr',
       },
     }],
   })
