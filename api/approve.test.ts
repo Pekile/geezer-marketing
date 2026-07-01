@@ -116,7 +116,7 @@ describe('POST /api/approve', () => {
     // Status flipped to 'sent'.
     expect(updateSet).toHaveBeenCalledWith({ status: 'sent' })
 
-    expect(res._json).toEqual({ ok: true, sent: 2 })
+    expect(res._json).toEqual({ ok: true, sent: 2, testMode: false })
   })
 
   it('returns 400 when stored copy is not valid JSON', async () => {

@@ -66,7 +66,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return
   }
 
-  for (const draft of drafts) {
+  // In test mode (TEST_RECIPIENT_* set), send to only one customer so the
+  // test inbox gets a single sample message, not hundreds of redirected copies.
+  const isTestMode = !!(config.TEST_RECIPIENT_EMAIL || config.TEST_RECIPIENT_PHONE)
+  const toSend = isTestMode ? drafts.slice(0, 1) : drafts
+
+  for (const draft of toSend) {
     const sends: Promise<void>[] = []
 
     if (draft.email) {
@@ -92,5 +97,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     .set({ status: 'sent' })
     .where(eq(campaigns.id, campaign.id))
 
-  res.json({ ok: true, sent: drafts.length })
+  res.json({ ok: true, sent: toSend.length, testMode: isTestMode })
 }
