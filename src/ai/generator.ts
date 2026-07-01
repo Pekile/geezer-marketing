@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import config from '../config.js'
-import type { ShopifyCustomer, ShopifyOrder, ShopifyProduct } from '../shopify/types.js'
+import type { ShopifyCustomer, ShopifyProduct } from '../shopify/types.js'
 
 const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY })
 
@@ -74,31 +74,26 @@ Ne zato što si glasan. Nego zato što si miran.
 
 Pišeš na srpskom. Obraćaš se sa "ti" (neformalno).`
 
-export type CustomerWithOrders = {
-  customer: ShopifyCustomer
-  orders: ShopifyOrder[]
-}
-
 /**
  * Generates copy for up to ~10 customers in a single Claude API call.
  * Returns one CampaignCopy per customer in the same order as input.
- * Much faster than one API call per customer for large customer lists.
+ * Uses orders_count from the customer object (already fetched with the customer list)
+ * so no extra Shopify API calls are needed per customer.
  */
 export async function generateCampaignCopyBatch(
   product: ShopifyProduct,
-  batch: CustomerWithOrders[],
+  batch: ShopifyCustomer[],
 ): Promise<CampaignCopy[]> {
   const price = product.variants[0]?.price ?? 'N/A'
   const description = product.body_html.replace(/<[^>]+>/g, '').trim()
 
-  const customerDescriptions = batch.map(({ customer, orders }, idx) => {
-    const orderHistory = orders.length
-      ? orders.map(o => o.line_items.map(i => `${i.title} (${i.quantity}x)`).join(', ')).join(' | ')
-      : 'nema prethodnih narudžbina'
-    const isRepeatCustomer = orders.length > 0
+  const customerDescriptions = batch.map((customer, idx) => {
+    const isRepeatCustomer = customer.orders_count > 0
+    const repeatNote = isRepeatCustomer
+      ? `existeći kupac (${customer.orders_count} narudžbina) — Tip 1 ili 2`
+      : 'novi kupac — Tip 3'
     return `Kupac ${idx + 1}: ${customer.first_name} ${customer.last_name}
-Prethodne kupovine: ${orderHistory}
-Tip: ${isRepeatCustomer ? 'postojeći (Tip 1 ili 2)' : 'novi (Tip 3)'}`
+Tip: ${repeatNote}`
   }).join('\n\n')
 
   const message = await client.messages.create({

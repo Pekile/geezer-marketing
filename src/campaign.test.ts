@@ -72,12 +72,10 @@ vi.mock('./ai/generator.js', () => ({
 
 // --- shopify client mock ----------------------------------------------------
 const getOptedInCustomers = vi.fn(async (): Promise<unknown[]> => [])
-const getCustomerOrders = vi.fn(async (_id: number) => [])
 const getProduct = vi.fn(async () => product)
 
 vi.mock('./shopify/client.js', () => ({
   getOptedInCustomers: () => getOptedInCustomers(),
-  getCustomerOrders: (id: number) => getCustomerOrders(id),
   getProduct: () => getProduct(),
 }))
 
@@ -147,8 +145,8 @@ describe('generateCopiesForCampaign draft behaviour', () => {
 
   it('generates copy and stores it as a draft — never calls send functions', async () => {
     getOptedInCustomers.mockResolvedValueOnce([
-      { id: 1, first_name: 'Marko', last_name: 'M', email: 'marko@example.com', phone: '+38160111' },
-      { id: 2, first_name: 'Jovan', last_name: 'J', email: 'jovan@example.com', phone: null },
+      { id: 1, first_name: 'Marko', last_name: 'M', email: 'marko@example.com', phone: '+38160111', orders_count: 3 },
+      { id: 2, first_name: 'Jovan', last_name: 'J', email: 'jovan@example.com', phone: null, orders_count: 0 },
     ])
 
     const count = await generateCopiesForCampaign(1)

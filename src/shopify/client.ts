@@ -2,7 +2,7 @@ import config from '../config.js'
 import type { ShopifyCustomer, ShopifyOrder, ShopifyProduct } from './types.js'
 
 const BASE = `https://${config.SHOPIFY_STORE_DOMAIN}/admin/api/2024-01`
-const CUSTOMER_FIELDS = 'id,first_name,last_name,email,phone,email_marketing_consent,sms_marketing_consent'
+const CUSTOMER_FIELDS = 'id,first_name,last_name,email,phone,orders_count,email_marketing_consent,sms_marketing_consent'
 
 // Cache token for the lifetime of this function invocation
 let cachedToken: string | null = null
@@ -34,11 +34,16 @@ async function getToken(): Promise<string> {
   return cachedToken
 }
 
-async function shopifyFetch<T>(path: string): Promise<T> {
+async function shopifyFetch<T>(path: string, retries = 3): Promise<T> {
   const token = await getToken()
   const res = await fetch(`${BASE}${path}`, {
     headers: { 'X-Shopify-Access-Token': token },
   })
+  if (res.status === 429 && retries > 0) {
+    // Shopify rate limit: wait 1s and retry
+    await new Promise(r => setTimeout(r, 1000))
+    return shopifyFetch<T>(path, retries - 1)
+  }
   if (!res.ok) throw new Error(`Shopify ${path}: ${res.status} ${await res.text()}`)
   return res.json() as Promise<T>
 }

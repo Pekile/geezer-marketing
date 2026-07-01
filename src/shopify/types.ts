@@ -13,6 +13,7 @@ export interface ShopifyCustomer {
   last_name: string
   email: string
   phone: string | null
+  orders_count: number
   email_marketing_consent: { state: 'subscribed' | 'unsubscribed' | 'pending' | 'not_subscribed' }
   sms_marketing_consent: { state: 'subscribed' | 'unsubscribed' | 'pending' | 'not_subscribed' } | null
 }

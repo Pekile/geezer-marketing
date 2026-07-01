@@ -1,9 +1,8 @@
 import { eq } from 'drizzle-orm'
 import { generateCampaignCopyBatch } from './ai/generator.js'
-import type { CustomerWithOrders } from './ai/generator.js'
 import { db } from './db/client.js'
 import { campaignSends, campaigns } from './db/schema.js'
-import { getCustomerOrders, getOptedInCustomers, getProduct } from './shopify/client.js'
+import { getOptedInCustomers, getProduct } from './shopify/client.js'
 import type { ShopifyProduct } from './shopify/types.js'
 
 export type CustomerCopy = {
@@ -81,29 +80,15 @@ export async function generateCopiesForCampaign(campaignId: number): Promise<num
   console.log(`[campaign] Generating copy for "${product.title}" (campaign ${campaignId})`)
 
   const customers = await getOptedInCustomers()
-  console.log(`[campaign] ${customers.length} customers — fetching order history...`)
+  console.log(`[campaign] ${customers.length} customers — generating copy in batches...`)
 
-  // Step 1: fetch all customer orders concurrently (20 at a time, Shopify is fast).
-  const SHOPIFY_CONCURRENCY = 20
-  const customersWithOrders: CustomerWithOrders[] = []
-  for (let i = 0; i < customers.length; i += SHOPIFY_CONCURRENCY) {
-    const slice = customers.slice(i, i + SHOPIFY_CONCURRENCY)
-    const results = await Promise.all(
-      slice.map(async customer => ({
-        customer,
-        orders: await getCustomerOrders(customer.id),
-      })),
-    )
-    customersWithOrders.push(...results)
-  }
-
-  // Step 2: generate copy for 8 customers per Claude call, 5 calls at a time.
-  // This turns 156 Claude calls into ~20 calls, reducing runtime from 2+ min to ~30s.
+  // Generate copy for 8 customers per Claude call, 5 calls at a time.
+  // orders_count comes from the customer list fetch (no extra Shopify API calls needed).
   const CLAUDE_BATCH_SIZE = 8
   const CLAUDE_CONCURRENCY = 5
-  const claudeBatches: CustomerWithOrders[][] = []
-  for (let i = 0; i < customersWithOrders.length; i += CLAUDE_BATCH_SIZE) {
-    claudeBatches.push(customersWithOrders.slice(i, i + CLAUDE_BATCH_SIZE))
+  const claudeBatches = []
+  for (let i = 0; i < customers.length; i += CLAUDE_BATCH_SIZE) {
+    claudeBatches.push(customers.slice(i, i + CLAUDE_BATCH_SIZE))
   }
   console.log(`[campaign] ${claudeBatches.length} Claude batches of up to ${CLAUDE_BATCH_SIZE} customers`)
 
@@ -121,7 +106,7 @@ export async function generateCopiesForCampaign(campaignId: number): Promise<num
         continue
       }
       for (let k = 0; k < batch.length; k++) {
-        const { customer } = batch[k]
+        const customer = batch[k]
         const copy = r.value[k]
         if (!copy) {
           console.error(`[campaign] ✗ missing copy for customer ${customer.id}`)
