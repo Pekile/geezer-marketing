@@ -2,14 +2,9 @@ import { eq } from 'drizzle-orm'
 import { generateCampaignCopy } from './ai/generator.js'
 import { db } from './db/client.js'
 import { campaignSends, campaigns } from './db/schema.js'
-import { getCustomerOrders, getOptedInCustomers } from './shopify/client.js'
+import { getCustomerOrders, getOptedInCustomers, getProduct } from './shopify/client.js'
 import type { ShopifyProduct } from './shopify/types.js'
 
-/**
- * One customer's generated copy, captured at draft time so the approval
- * endpoint can dispatch the exact messages the owner reviewed. Serialised as
- * JSON into `campaigns.copy`.
- */
 export type CustomerCopy = {
   customerId: string
   firstName: string
@@ -38,7 +33,13 @@ export async function logSend(
   }
 }
 
-export async function runCampaign(product: ShopifyProduct): Promise<void> {
+/**
+ * Called by the webhook handler immediately on product/create.
+ * Just records the campaign row so the dashboard can show it.
+ * Copy generation is deferred to /api/generate (triggered by the dashboard).
+ * Returns null if a campaign for this product already exists (idempotent).
+ */
+export async function recordCampaign(product: ShopifyProduct): Promise<number | null> {
   const productId = product.id.toString()
 
   const existing = await db
@@ -48,65 +49,74 @@ export async function runCampaign(product: ShopifyProduct): Promise<void> {
     .limit(1)
 
   if (existing.length > 0) {
-    console.log(`[campaign] Skipping "${product.title}" — already campaigned`)
-    return
+    console.log(`[campaign] Already recorded "${product.title}" (id=${existing[0].id})`)
+    return null
   }
 
   const [campaign] = await db
     .insert(campaigns)
-    .values({ productId, productTitle: product.title })
+    .values({ productId, productTitle: product.title, status: 'pending' })
     .returning({ id: campaigns.id })
 
-  const campaignId = campaign.id
-  console.log(`[campaign] Starting for: "${product.title}" (id=${campaignId})`)
+  console.log(`[campaign] Recorded "${product.title}" (id=${campaign.id}) — pending copy generation`)
+  return campaign.id
+}
 
-  try {
-    const customers = await getOptedInCustomers()
-    console.log(`[campaign] ${customers.length} customers`)
+/**
+ * Generates marketing copy for every opted-in customer and stores it in the
+ * campaign row. Called from /api/generate, which is triggered by the dashboard.
+ * Returns the number of customer drafts generated.
+ */
+export async function generateCopiesForCampaign(campaignId: number): Promise<number> {
+  const [campaign] = await db
+    .select()
+    .from(campaigns)
+    .where(eq(campaigns.id, campaignId))
+    .limit(1)
 
-    // Generate copy for all customers in parallel (20 at a time).
-    const CONCURRENCY = 20
-    const drafts: CustomerCopy[] = []
+  if (!campaign) throw new Error(`Campaign ${campaignId} not found`)
 
-    for (let i = 0; i < customers.length; i += CONCURRENCY) {
-      const batch = customers.slice(i, i + CONCURRENCY)
-      const results = await Promise.allSettled(
-        batch.map(async customer => {
-          const customerId = customer.id.toString()
-          const orders = await getCustomerOrders(customer.id)
-          const copy = await generateCampaignCopy(product, customer, orders)
-          console.log(`[campaign] ✓ copy ready for ${customer.email ?? customerId}`)
-          return {
-            customerId,
-            firstName: customer.first_name,
-            email: customer.email ?? null,
-            phone: customer.phone ?? null,
-            email_subject: copy.email.subject,
-            email_body: copy.email.body,
-            sms: copy.sms.message,
-            whatsapp: copy.whatsapp.message,
-            viber: copy.viber.message,
-          } satisfies CustomerCopy
-        }),
-      )
-      for (const r of results) {
-        if (r.status === 'fulfilled') drafts.push(r.value)
-        else console.error('[campaign] ✗ copy failed:', r.reason)
-      }
+  const product = await getProduct(campaign.productId)
+  console.log(`[campaign] Generating copy for "${product.title}" (campaign ${campaignId})`)
+
+  const customers = await getOptedInCustomers()
+  console.log(`[campaign] ${customers.length} customers to process`)
+
+  const CONCURRENCY = 20
+  const drafts: CustomerCopy[] = []
+
+  for (let i = 0; i < customers.length; i += CONCURRENCY) {
+    const batch = customers.slice(i, i + CONCURRENCY)
+    const results = await Promise.allSettled(
+      batch.map(async customer => {
+        const customerId = customer.id.toString()
+        const orders = await getCustomerOrders(customer.id)
+        const copy = await generateCampaignCopy(product, customer, orders)
+        console.log(`[campaign] ✓ copy ready for ${customer.email ?? customerId}`)
+        return {
+          customerId,
+          firstName: customer.first_name,
+          email: customer.email ?? null,
+          phone: customer.phone ?? null,
+          email_subject: copy.email.subject,
+          email_body: copy.email.body,
+          sms: copy.sms.message,
+          whatsapp: copy.whatsapp.message,
+          viber: copy.viber.message,
+        } satisfies CustomerCopy
+      }),
+    )
+    for (const r of results) {
+      if (r.status === 'fulfilled') drafts.push(r.value)
+      else console.error('[campaign] ✗ copy failed:', r.reason)
     }
-
-    await db
-      .update(campaigns)
-      .set({ copy: JSON.stringify(drafts), status: 'draft' })
-      .where(eq(campaigns.id, campaignId))
-
-    console.log(`[campaign] Draft saved for: "${product.title}" — ${drafts.length} customers, awaiting approval`)
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.error(`[campaign] FATAL error for campaign ${campaignId}:`, err)
-    await db
-      .update(campaigns)
-      .set({ copy: JSON.stringify({ _error: msg }), status: 'error' })
-      .where(eq(campaigns.id, campaignId))
   }
+
+  await db
+    .update(campaigns)
+    .set({ copy: JSON.stringify(drafts), status: 'draft' })
+    .where(eq(campaigns.id, campaignId))
+
+  console.log(`[campaign] Draft saved — ${drafts.length} customers, awaiting approval`)
+  return drafts.length
 }

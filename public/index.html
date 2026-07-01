@@ -178,6 +178,23 @@
     .approve-btn:disabled { opacity: 0.6; cursor: default; }
     .approve-error { color: var(--red); font-size: 13px; }
 
+    /* PENDING / GENERATING badge */
+    .pending-badge {
+      padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 700;
+      background: rgba(102,102,102,0.2); color: var(--muted);
+      display: flex; align-items: center; gap: 6px;
+    }
+    .pending-spinner {
+      width: 10px; height: 10px; border: 2px solid #444;
+      border-top-color: var(--gold); border-radius: 50%;
+      animation: spin 0.8s linear infinite; flex-shrink: 0;
+    }
+    .generating-row {
+      border-top: 1px solid var(--border);
+      padding: 16px 20px;
+      color: var(--muted); font-size: 13px; font-style: italic;
+    }
+
     /* EMPTY */
     .empty {
       text-align: center; padding: 80px 20px; color: var(--muted);
@@ -348,6 +365,11 @@
       </div>`
   }
 
+  // A campaign needs copy generation when it has no copy yet.
+  function needsGeneration(c) {
+    return c.status === 'pending' || (c.status !== 'sent' && !c.copy)
+  }
+
   function renderCampaigns(campaigns) {
     const list = document.getElementById('campaigns-list')
 
@@ -362,7 +384,8 @@
     }
 
     list.innerHTML = campaigns.map(c => {
-      const isDraft = c.status === 'draft'
+      const isGenerating = needsGeneration(c)
+      const isDraft = c.status === 'draft' && !!c.copy
       const rate = c.totalSends > 0 ? Math.round((c.totalSent / c.totalSends) * 100) : 0
       const channelHtml = CHANNELS.map(ch => {
         const d = c.byChannel[ch] || { sent: 0, failed: 0 }
@@ -377,17 +400,26 @@
           </div>`
       }).join('')
 
-      const badgeHtml = isDraft
-        ? `<div class="draft-badge">DRAFT</div>`
-        : `<div class="success-badge ${successClass(rate)}">${c.totalSends > 0 ? rate + '%' : '—'}</div>`
-
-      const detailSelector = isDraft ? '.draft-preview' : '.channel-breakdown'
-      const detailHtml = isDraft
-        ? draftPreviewHtml(c)
-        : `<div class="channel-breakdown">${channelHtml}</div>`
+      let badgeHtml, detailHtml, detailSelector, cardClass
+      if (isGenerating) {
+        badgeHtml = `<div class="pending-badge"><div class="pending-spinner"></div>Generisanje...</div>`
+        detailHtml = `<div class="generating-row" id="gen-status-${c.id}">Generisanje personalizovane kopije za sve kupce... (može potrajati ~30s)</div>`
+        detailSelector = '.generating-row'
+        cardClass = ' draft'
+      } else if (isDraft) {
+        badgeHtml = `<div class="draft-badge">DRAFT</div>`
+        detailHtml = draftPreviewHtml(c)
+        detailSelector = '.draft-preview'
+        cardClass = ' draft'
+      } else {
+        badgeHtml = `<div class="success-badge ${successClass(rate)}">${c.totalSends > 0 ? rate + '%' : '—'}</div>`
+        detailHtml = `<div class="channel-breakdown">${channelHtml}</div>`
+        detailSelector = '.channel-breakdown'
+        cardClass = ''
+      }
 
       return `
-        <div class="campaign-card${isDraft ? ' draft' : ''}">
+        <div class="campaign-card${cardClass}" id="campaign-card-${c.id}">
           <div class="campaign-header" onclick="this.parentElement.querySelector('${detailSelector}').classList.toggle('hidden')">
             <div>
               <div class="campaign-title">${esc(c.productTitle || c.productId)}</div>
@@ -402,6 +434,17 @@
           ${detailHtml}
         </div>`
     }).join('')
+  }
+
+  async function generateCopy(campaignId) {
+    const headers = { 'Content-Type': 'application/json' }
+    if (secret) headers['x-secret'] = secret
+    const res = await fetch('/api/generate?id=' + campaignId, { method: 'POST', headers })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.error || 'Greška pri generisanju.')
+    }
+    return res.json()
   }
 
   async function approve(id, btn) {
@@ -457,6 +500,23 @@
       document.getElementById('stat-rate').textContent = data.stats.successRate + '%'
 
       renderCampaigns(data.campaigns)
+
+      // Auto-generate copy for any campaign that doesn't have it yet.
+      const pending = data.campaigns.filter(needsGeneration)
+      if (pending.length > 0) {
+        Promise.all(pending.map(async c => {
+          const statusEl = document.getElementById('gen-status-' + c.id)
+          try {
+            await generateCopy(c.id)
+            if (statusEl) statusEl.textContent = 'Kopija generisana — osvežite stranicu za pregled.'
+          } catch (e) {
+            if (statusEl) statusEl.textContent = 'Greška: ' + (e.message || 'nepoznata greška')
+          }
+        })).then(() => {
+          // Reload once all generation jobs complete so the copy previews appear.
+          loadData()
+        })
+      }
     } catch (e) {
       list.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-text">Greška pri učitavanju</div></div>'
     }
@@ -477,12 +537,8 @@
     localStorage.setItem('geezer_secret', secret)
     document.getElementById('login-overlay').style.display = 'none'
 
-    const data = await res.json()
-    document.getElementById('stat-campaigns').textContent = data.stats.totalCampaigns
-    document.getElementById('stat-sends').textContent = data.stats.totalSends
-    document.getElementById('stat-sent').textContent = data.stats.totalSent
-    document.getElementById('stat-rate').textContent = data.stats.successRate + '%'
-    renderCampaigns(data.campaigns)
+    // Use loadData() so pending campaign generation is also triggered.
+    loadData()
   }
 
   document.getElementById('secret-input')?.addEventListener('keydown', e => {

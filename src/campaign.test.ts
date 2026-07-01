@@ -2,12 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // --- db client mock ---------------------------------------------------------
 let existingRows: { id: number }[] = []
+let campaignRows: Array<{ id: number; productId: string; status: string; copy: string | null }> = []
+
 const limit = vi.fn(async () => existingRows)
 const where = vi.fn(() => ({ limit }))
 const from = vi.fn(() => ({ where }))
 const select = vi.fn(() => ({ from }))
 
-// The campaigns insert appends to the backing store and returns its id.
 const insertReturning = vi.fn(async () => [{ id: existingRows.length + 1 }])
 const insertValues = vi.fn((_vals: unknown) => {
   existingRows.push({ id: existingRows.length + 1 })
@@ -21,7 +22,6 @@ function tableName(table: unknown): string {
   return sym ? String((table as Record<symbol, unknown>)[sym]) : String(table)
 }
 
-// campaign_sends rows written by logSend (used at approval time via api/approve.ts).
 const recordedSends: Array<{ channel: string; status: string; errorMessage?: string }> = []
 const sendValues = vi.fn(async (row: { channel: string; status: string; errorMessage?: string }) => {
   recordedSends.push(row)
@@ -32,7 +32,6 @@ const insert = vi.fn((table: unknown) => {
   return { values: insertValues }
 })
 
-// The draft store: runCampaign ends with db.update(...).set({copy,status}).where(...).
 const updateWhere = vi.fn(async () => undefined)
 const updateSet = vi.fn((_vals: unknown) => ({ where: updateWhere }))
 const update = vi.fn(() => ({ set: updateSet }))
@@ -68,16 +67,18 @@ vi.mock('./ai/generator.js', () => ({
   generateCampaignCopy: () => generateCampaignCopy(),
 }))
 
-// --- collaborators mock -----------------------------------------------------
+// --- shopify client mock ----------------------------------------------------
 const getOptedInCustomers = vi.fn(async (): Promise<unknown[]> => [])
 const getCustomerOrders = vi.fn(async (_id: number) => [])
+const getProduct = vi.fn(async () => product)
 
 vi.mock('./shopify/client.js', () => ({
   getOptedInCustomers: () => getOptedInCustomers(),
   getCustomerOrders: (id: number) => getCustomerOrders(id),
+  getProduct: () => getProduct(),
 }))
 
-import { runCampaign } from './campaign.js'
+import { generateCopiesForCampaign, recordCampaign } from './campaign.js'
 import type { ShopifyProduct } from './shopify/types.js'
 
 const product: ShopifyProduct = {
@@ -89,70 +90,76 @@ const product: ShopifyProduct = {
   variants: [{ price: '20.00' }],
 }
 
-describe('runCampaign idempotency', () => {
+describe('recordCampaign idempotency', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     existingRows = []
+    campaignRows = []
     recordedSends.length = 0
   })
 
-  it('skips the campaign when the product already has a campaign', async () => {
+  it('skips when product already has a campaign', async () => {
     existingRows = [{ id: 1 }]
 
-    await runCampaign(product)
+    const id = await recordCampaign(product)
 
-    expect(select).toHaveBeenCalledTimes(1)
+    expect(id).toBeNull()
     expect(insert).not.toHaveBeenCalled()
-    expect(getOptedInCustomers).not.toHaveBeenCalled()
   })
 
-  it('inserts a campaign row and proceeds when first-time', async () => {
+  it('inserts a pending campaign row when first-time', async () => {
     existingRows = []
 
-    await runCampaign(product)
+    const id = await recordCampaign(product)
 
-    expect(select).toHaveBeenCalledTimes(1)
+    expect(id).not.toBeNull()
     expect(insertValues).toHaveBeenCalledTimes(1)
-    expect(insertValues).toHaveBeenCalledWith({ productId: '12345', productTitle: 'Geezer Tee' })
-    expect(getOptedInCustomers).toHaveBeenCalledTimes(1)
+    expect(insertValues).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'pending' }),
+    )
   })
 
-  it('re-delivering the same product creates no second record on the second run', async () => {
+  it('is idempotent — second call with same product returns null', async () => {
     existingRows = []
 
-    await runCampaign(product)
-    await runCampaign(product)
+    const first = await recordCampaign(product)
+    const second = await recordCampaign(product)
 
-    expect(select).toHaveBeenCalledTimes(2)
+    expect(first).not.toBeNull()
+    expect(second).toBeNull()
     expect(insertValues).toHaveBeenCalledTimes(1)
-    expect(getOptedInCustomers).toHaveBeenCalledTimes(1)
   })
 })
 
-describe('runCampaign draft behaviour', () => {
+describe('generateCopiesForCampaign draft behaviour', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     existingRows = []
+    campaignRows = []
     recordedSends.length = 0
+    // Default: select returns a full campaign row for generateCopiesForCampaign
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(limit as any).mockResolvedValue([{ id: 1, productId: '12345', productTitle: 'Geezer Tee', status: 'pending', copy: null }])
   })
 
-  it('stores generated copy as a draft and never calls a send function', async () => {
+  it('generates copy and stores it as a draft — never calls send functions', async () => {
     getOptedInCustomers.mockResolvedValueOnce([
       { id: 1, first_name: 'Marko', last_name: 'M', email: 'marko@example.com', phone: '+38160111' },
       { id: 2, first_name: 'Jovan', last_name: 'J', email: 'jovan@example.com', phone: null },
     ])
 
-    await runCampaign(product)
+    const count = await generateCopiesForCampaign(1)
 
-    // No channel send happened — approval is a separate step.
+    expect(count).toBe(2)
+
+    // No channel sends — approval is a separate step
     expect(sendEmail).not.toHaveBeenCalled()
     expect(sendSms).not.toHaveBeenCalled()
     expect(sendWhatsApp).not.toHaveBeenCalled()
     expect(sendViber).not.toHaveBeenCalled()
 
-    // Draft persisted via a single update setting status='draft' and the copy JSON.
+    // Draft persisted via update setting status='draft' and the copy JSON
     expect(update).toHaveBeenCalledTimes(1)
-    expect(updateSet).toHaveBeenCalledTimes(1)
     const arg = updateSet.mock.calls[0][0] as { status: string; copy: string }
     expect(arg.status).toBe('draft')
 
@@ -169,7 +176,6 @@ describe('runCampaign draft behaviour', () => {
       whatsapp: 'wa text',
       viber: 'viber text',
     })
-    // Customer 2 has no phone — captured as null, copy still generated.
     expect(drafts[1].phone).toBeNull()
   })
 })

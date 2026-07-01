@@ -1,5 +1,5 @@
 import config from '../config.js'
-import type { ShopifyCustomer, ShopifyOrder } from './types.js'
+import type { ShopifyCustomer, ShopifyOrder, ShopifyProduct } from './types.js'
 
 const BASE = `https://${config.SHOPIFY_STORE_DOMAIN}/admin/api/2024-01`
 const CUSTOMER_FIELDS = 'id,first_name,last_name,email,phone,email_marketing_consent,sms_marketing_consent'
@@ -73,6 +73,13 @@ export async function getOptedInCustomers(): Promise<ShopifyCustomer[]> {
 
   console.log(`[shopify] ${all.length} total customers`)
   return all
+}
+
+export async function getProduct(productId: string): Promise<ShopifyProduct> {
+  const data = await shopifyFetch<{ product: ShopifyProduct }>(
+    `/products/${productId}.json`,
+  )
+  return data.product
 }
 
 export async function getCustomerOrders(customerId: number): Promise<ShopifyOrder[]> {

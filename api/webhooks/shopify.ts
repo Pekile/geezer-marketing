@@ -1,10 +1,9 @@
-import { waitUntil } from '@vercel/functions'
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { runCampaign } from '../../src/campaign.js'
+import { recordCampaign } from '../../src/campaign.js'
 import type { ShopifyProduct } from '../../src/shopify/types.js'
 import { validateWebhook } from '../../src/shopify/webhook.js'
 
-export const maxDuration = 300
+export const maxDuration = 30
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -24,13 +23,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return
   }
 
-  // Acknowledge immediately — Shopify requires response within 5s
-  res.status(200).send('ok')
-
   if (topic === 'products/create') {
     const product = JSON.parse(body) as ShopifyProduct
-    waitUntil(
-      runCampaign(product).catch(err => console.error('[webhook] campaign error:', err))
-    )
+    // Just record the campaign row — copy is generated later via /api/generate
+    // when the dashboard loads, so we never risk Vercel background-task timeouts.
+    await recordCampaign(product)
   }
+
+  res.status(200).send('ok')
 }

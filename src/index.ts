@@ -2,7 +2,7 @@ import 'dotenv/config'
 import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import config from './config.js'
-import { runCampaign } from './campaign.js'
+import { recordCampaign } from './campaign.js'
 import type { ShopifyProduct } from './shopify/types.js'
 import { validateWebhook } from './shopify/webhook.js'
 
@@ -40,7 +40,7 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
 
       if (topic === 'products/create') {
         const product = JSON.parse(body) as ShopifyProduct
-        runCampaign(product).catch(err => console.error('[webhook] campaign error:', err))
+        recordCampaign(product).catch((err: unknown) => console.error('[webhook] campaign error:', err))
       }
 
       return
