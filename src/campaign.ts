@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm'
-import { generateCampaignCopy } from './ai/generator.js'
+import { generateCampaignCopyBatch } from './ai/generator.js'
+import type { CustomerWithOrders } from './ai/generator.js'
 import { db } from './db/client.js'
 import { campaignSends, campaigns } from './db/schema.js'
 import { getCustomerOrders, getOptedInCustomers, getProduct } from './shopify/client.js'
@@ -80,21 +81,54 @@ export async function generateCopiesForCampaign(campaignId: number): Promise<num
   console.log(`[campaign] Generating copy for "${product.title}" (campaign ${campaignId})`)
 
   const customers = await getOptedInCustomers()
-  console.log(`[campaign] ${customers.length} customers to process`)
+  console.log(`[campaign] ${customers.length} customers — fetching order history...`)
 
-  const CONCURRENCY = 20
+  // Step 1: fetch all customer orders concurrently (20 at a time, Shopify is fast).
+  const SHOPIFY_CONCURRENCY = 20
+  const customersWithOrders: CustomerWithOrders[] = []
+  for (let i = 0; i < customers.length; i += SHOPIFY_CONCURRENCY) {
+    const slice = customers.slice(i, i + SHOPIFY_CONCURRENCY)
+    const results = await Promise.all(
+      slice.map(async customer => ({
+        customer,
+        orders: await getCustomerOrders(customer.id),
+      })),
+    )
+    customersWithOrders.push(...results)
+  }
+
+  // Step 2: generate copy for 8 customers per Claude call, 5 calls at a time.
+  // This turns 156 Claude calls into ~20 calls, reducing runtime from 2+ min to ~30s.
+  const CLAUDE_BATCH_SIZE = 8
+  const CLAUDE_CONCURRENCY = 5
+  const claudeBatches: CustomerWithOrders[][] = []
+  for (let i = 0; i < customersWithOrders.length; i += CLAUDE_BATCH_SIZE) {
+    claudeBatches.push(customersWithOrders.slice(i, i + CLAUDE_BATCH_SIZE))
+  }
+  console.log(`[campaign] ${claudeBatches.length} Claude batches of up to ${CLAUDE_BATCH_SIZE} customers`)
+
   const drafts: CustomerCopy[] = []
-
-  for (let i = 0; i < customers.length; i += CONCURRENCY) {
-    const batch = customers.slice(i, i + CONCURRENCY)
-    const results = await Promise.allSettled(
-      batch.map(async customer => {
-        const customerId = customer.id.toString()
-        const orders = await getCustomerOrders(customer.id)
-        const copy = await generateCampaignCopy(product, customer, orders)
-        console.log(`[campaign] ✓ copy ready for ${customer.email ?? customerId}`)
-        return {
-          customerId,
+  for (let i = 0; i < claudeBatches.length; i += CLAUDE_CONCURRENCY) {
+    const wave = claudeBatches.slice(i, i + CLAUDE_CONCURRENCY)
+    const waveResults = await Promise.allSettled(
+      wave.map(batch => generateCampaignCopyBatch(product, batch)),
+    )
+    for (let j = 0; j < waveResults.length; j++) {
+      const r = waveResults[j]
+      const batch = wave[j]
+      if (r.status === 'rejected') {
+        console.error('[campaign] ✗ batch failed:', r.reason)
+        continue
+      }
+      for (let k = 0; k < batch.length; k++) {
+        const { customer } = batch[k]
+        const copy = r.value[k]
+        if (!copy) {
+          console.error(`[campaign] ✗ missing copy for customer ${customer.id}`)
+          continue
+        }
+        drafts.push({
+          customerId: customer.id.toString(),
           firstName: customer.first_name,
           email: customer.email ?? null,
           phone: customer.phone ?? null,
@@ -103,13 +137,10 @@ export async function generateCopiesForCampaign(campaignId: number): Promise<num
           sms: copy.sms.message,
           whatsapp: copy.whatsapp.message,
           viber: copy.viber.message,
-        } satisfies CustomerCopy
-      }),
-    )
-    for (const r of results) {
-      if (r.status === 'fulfilled') drafts.push(r.value)
-      else console.error('[campaign] ✗ copy failed:', r.reason)
+        })
+      }
     }
+    console.log(`[campaign] wave ${Math.floor(i / CLAUDE_CONCURRENCY) + 1}/${Math.ceil(claudeBatches.length / CLAUDE_CONCURRENCY)} done — ${drafts.length} copies so far`)
   }
 
   await db

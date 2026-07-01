@@ -11,24 +11,7 @@ export interface CampaignCopy {
   viber: { message: string }
 }
 
-export async function generateCampaignCopy(
-  product: ShopifyProduct,
-  customer: ShopifyCustomer,
-  orders: ShopifyOrder[],
-): Promise<CampaignCopy> {
-  const orderHistory = orders.length
-    ? orders.map(o => o.line_items.map(i => `${i.title} (${i.quantity}x)`).join(', ')).join(' | ')
-    : 'nema prethodnih narudžbina'
-
-  const price = product.variants[0]?.price ?? 'N/A'
-  const description = product.body_html.replace(/<[^>]+>/g, '').trim()
-
-  const isRepeatCustomer = orders.length > 0
-
-  const message = await client.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 2048,
-    system: `Ti si copywriter za Geezer Collection — srpski brend muške mode.
+const SYSTEM_PROMPT = `Ti si copywriter za Geezer Collection — srpski brend muške mode.
 
 ## Šta je Geezer
 
@@ -89,61 +72,106 @@ Ne zato što si glasan. Nego zato što si miran.
 **WhatsApp**: 2–3 rečenice, prijateljski ali ne ulizički. Emoji OK, ali max 2–3.
 **Viber**: isto kao WhatsApp. Toplo, konkretno, kratko.
 
-Pišeš na srpskom. Obraćaš se sa "ti" (neformalno).`,
+Pišeš na srpskom. Obraćaš se sa "ti" (neformalno).`
+
+export type CustomerWithOrders = {
+  customer: ShopifyCustomer
+  orders: ShopifyOrder[]
+}
+
+/**
+ * Generates copy for up to ~10 customers in a single Claude API call.
+ * Returns one CampaignCopy per customer in the same order as input.
+ * Much faster than one API call per customer for large customer lists.
+ */
+export async function generateCampaignCopyBatch(
+  product: ShopifyProduct,
+  batch: CustomerWithOrders[],
+): Promise<CampaignCopy[]> {
+  const price = product.variants[0]?.price ?? 'N/A'
+  const description = product.body_html.replace(/<[^>]+>/g, '').trim()
+
+  const customerDescriptions = batch.map(({ customer, orders }, idx) => {
+    const orderHistory = orders.length
+      ? orders.map(o => o.line_items.map(i => `${i.title} (${i.quantity}x)`).join(', ')).join(' | ')
+      : 'nema prethodnih narudžbina'
+    const isRepeatCustomer = orders.length > 0
+    return `Kupac ${idx + 1}: ${customer.first_name} ${customer.last_name}
+Prethodne kupovine: ${orderHistory}
+Tip: ${isRepeatCustomer ? 'postojeći (Tip 1 ili 2)' : 'novi (Tip 3)'}`
+  }).join('\n\n')
+
+  const message = await client.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 6000,
+    system: SYSTEM_PROMPT,
     tools: [{
-      name: 'campaign_copy',
-      description: 'Structured marketing campaign copy for email, SMS, and WhatsApp',
+      name: 'campaign_copies',
+      description: 'Batch marketing copy for multiple customers, in the same order as input',
       input_schema: {
         type: 'object' as const,
         properties: {
-          email: {
-            type: 'object',
-            properties: {
-              subject: { type: 'string', description: 'Email subject line' },
-              body: { type: 'string', description: 'Plain text email body, 3-5 sentences max' },
+          copies: {
+            type: 'array',
+            description: 'One entry per customer, same order as input',
+            items: {
+              type: 'object',
+              properties: {
+                email: {
+                  type: 'object',
+                  properties: {
+                    subject: { type: 'string', description: 'Email subject line' },
+                    body: { type: 'string', description: 'Plain text email body, 4–6 sentences' },
+                  },
+                  required: ['subject', 'body'],
+                },
+                sms: {
+                  type: 'object',
+                  properties: {
+                    message: { type: 'string', description: 'SMS text, max 160 characters' },
+                  },
+                  required: ['message'],
+                },
+                whatsapp: {
+                  type: 'object',
+                  properties: {
+                    message: { type: 'string', description: 'WhatsApp message, 2–3 sentences, max 2–3 emojis' },
+                  },
+                  required: ['message'],
+                },
+                viber: {
+                  type: 'object',
+                  properties: {
+                    message: { type: 'string', description: 'Viber message, friendly, 2–3 sentences, emojis OK' },
+                  },
+                  required: ['message'],
+                },
+              },
+              required: ['email', 'sms', 'whatsapp', 'viber'],
             },
-            required: ['subject', 'body'],
-          },
-          sms: {
-            type: 'object',
-            properties: {
-              message: { type: 'string', description: 'SMS text, max 160 characters' },
-            },
-            required: ['message'],
-          },
-          whatsapp: {
-            type: 'object',
-            properties: {
-              message: { type: 'string', description: 'WhatsApp message with emojis, 2-3 sentences' },
-            },
-            required: ['message'],
-          },
-          viber: {
-            type: 'object',
-            properties: {
-              message: { type: 'string', description: 'Viber message, friendly tone, 2-3 sentences, emojis OK' },
-            },
-            required: ['message'],
           },
         },
-        required: ['email', 'sms', 'whatsapp', 'viber'],
+        required: ['copies'],
       },
     }],
-    tool_choice: { type: 'tool', name: 'campaign_copy' },
+    tool_choice: { type: 'tool', name: 'campaign_copies' },
     messages: [{
       role: 'user',
       content: `Novi proizvod: ${product.title} — ${price} RSD
 Opis: ${description}
-Kupac: ${customer.first_name} ${customer.last_name}
-Prethodne kupovine: ${orderHistory}
-Tip kupca: ${isRepeatCustomer ? 'postojeći kupac (Tip 1 ili 2 — ima iskustva s brendom)' : 'novi kupac (Tip 3 — prvo obraćanje, fokus na autentičnost i odrastao stil)'}
 
-Napiši personalizovanu kampanju za email, SMS (max 160 karaktera), WhatsApp i Viber.
-Koristi pravo ime kupca (${customer.first_name}). Prilagodi ugao tipa kupca. Budi konkretan oko ovog proizvoda.`,
+Napiši personalizovanu kampanju za ${batch.length} kupca (u datom redosledu):
+
+${customerDescriptions}
+
+Za svakog kupca vrati email (naslov + telo), SMS (max 160 kar.), WhatsApp i Viber poruku.
+Koristi pravo ime kupca. Prilagodi ton tipu kupca. Budi konkretan oko ovog proizvoda.`,
     }],
   })
 
   const toolUse = message.content.find(b => b.type === 'tool_use')
-  if (!toolUse || toolUse.type !== 'tool_use') throw new Error('No tool_use block in response')
-  return toolUse.input as CampaignCopy
+  if (!toolUse || toolUse.type !== 'tool_use') throw new Error('No tool_use block in batch response')
+  const result = toolUse.input as { copies: CampaignCopy[] }
+  if (!Array.isArray(result.copies)) throw new Error('Invalid batch response: copies is not an array')
+  return result.copies
 }

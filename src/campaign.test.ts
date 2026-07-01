@@ -56,15 +56,18 @@ vi.mock('./channels/whatsapp.js', () => ({ sendWhatsApp: () => sendWhatsApp() })
 vi.mock('./channels/viber.js', () => ({ sendViber: () => sendViber() }))
 
 // --- copy generator mock ----------------------------------------------------
-const generateCampaignCopy = vi.fn(async () => ({
-  email: { subject: 'Subj', body: 'Body' },
-  sms: { message: 'sms text' },
-  whatsapp: { message: 'wa text' },
-  viber: { message: 'viber text' },
-}))
+// Batch version: takes (product, CustomerWithOrders[]) and returns CampaignCopy[]
+const generateCampaignCopyBatch = vi.fn(async (_product: unknown, batch: unknown[]) =>
+  batch.map(() => ({
+    email: { subject: 'Subj', body: 'Body' },
+    sms: { message: 'sms text' },
+    whatsapp: { message: 'wa text' },
+    viber: { message: 'viber text' },
+  })),
+)
 
 vi.mock('./ai/generator.js', () => ({
-  generateCampaignCopy: () => generateCampaignCopy(),
+  generateCampaignCopyBatch: (...a: unknown[]) => (generateCampaignCopyBatch as (...x: unknown[]) => Promise<unknown[]>)(...a),
 }))
 
 // --- shopify client mock ----------------------------------------------------
