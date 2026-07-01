@@ -86,6 +86,16 @@
     }
     .campaign-card:hover { border-color: #333; }
 
+    /* DRAFT CAMPAIGN */
+    .campaign-card.draft { border-color: var(--gold); }
+    .campaign-card.draft:hover { border-color: var(--gold); }
+
+    .draft-badge {
+      padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 700;
+      min-width: 52px; text-align: center; letter-spacing: 0.06em;
+      background: rgba(201,168,76,0.15); color: var(--gold);
+    }
+
     .campaign-header {
       display: grid;
       grid-template-columns: 1fr auto auto;
@@ -132,6 +142,41 @@
     .channel-stats { font-size: 13px; }
     .ch-sent { color: var(--text); font-weight: 600; }
     .ch-failed { color: var(--red); margin-left: 4px; font-size: 12px; }
+
+    /* DRAFT COPY PREVIEW */
+    .draft-preview {
+      border-top: 1px solid var(--border);
+      padding: 16px 20px;
+      display: flex; flex-direction: column; gap: 14px;
+    }
+    .preview-note {
+      color: var(--muted); font-size: 12px; font-style: italic;
+      border-left: 2px solid var(--gold-dim); padding-left: 10px;
+    }
+    .preview-item { display: flex; flex-direction: column; gap: 4px; }
+    .preview-label {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+    }
+    .preview-subject { color: var(--text); font-weight: 600; font-size: 13px; }
+    .preview-body {
+      color: var(--text); font-size: 13px; line-height: 1.5; white-space: pre-wrap;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+    }
+
+    .approve-row {
+      border-top: 1px solid var(--border);
+      padding: 14px 20px;
+      display: flex; align-items: center; gap: 14px;
+    }
+    .approve-btn {
+      background: var(--gold); color: #000; border: none;
+      padding: 9px 18px; border-radius: 8px; font-size: 14px; font-weight: 700;
+      cursor: pointer; letter-spacing: 0.02em;
+    }
+    .approve-btn:hover:not(:disabled) { background: #d4b060; }
+    .approve-btn:disabled { opacity: 0.6; cursor: default; }
+    .approve-error { color: var(--red); font-size: 13px; }
 
     /* EMPTY */
     .empty {
@@ -245,6 +290,64 @@
     return rate >= 80 ? 'high' : 'low'
   }
 
+  // Escape user/DB-provided text before it goes into innerHTML.
+  function esc(v) {
+    return String(v ?? '').replace(/[&<>"']/g, c => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ))
+  }
+
+  // Parse the campaign's stored copy (JSON array of per-customer copy) and
+  // return the first customer's copy as the preview example, or null.
+  function firstCopy(c) {
+    if (!c.copy) return null
+    try {
+      const drafts = JSON.parse(c.copy)
+      return Array.isArray(drafts) && drafts.length ? drafts[0] : null
+    } catch {
+      return null
+    }
+  }
+
+  function draftPreviewHtml(c) {
+    const copy = firstCopy(c)
+    if (!copy) {
+      return `<div class="draft-preview"><div class="preview-note">Kopija još nije generisana.</div></div>`
+    }
+
+    const body = String(copy.email_body || '')
+    const bodyPreview = body.length > 300 ? body.slice(0, 300) + '...' : body
+
+    return `
+      <div class="draft-preview">
+        <div class="preview-note">Prikazana kopija je primer za prvog kupca. Svaki kupac dobija personalizovanu poruku.</div>
+        <div class="preview-item">
+          <div class="preview-label"><span class="channel-dot dot-email"></span>Email — naslov</div>
+          <div class="preview-subject">${esc(copy.email_subject)}</div>
+        </div>
+        <div class="preview-item">
+          <div class="preview-label"><span class="channel-dot dot-email"></span>Email — telo</div>
+          <div class="preview-body">${esc(bodyPreview)}</div>
+        </div>
+        <div class="preview-item">
+          <div class="preview-label"><span class="channel-dot dot-sms"></span>SMS</div>
+          <div class="preview-body">${esc(copy.sms)}</div>
+        </div>
+        <div class="preview-item">
+          <div class="preview-label"><span class="channel-dot dot-whatsapp"></span>WhatsApp</div>
+          <div class="preview-body">${esc(copy.whatsapp)}</div>
+        </div>
+        <div class="preview-item">
+          <div class="preview-label"><span class="channel-dot dot-viber"></span>Viber</div>
+          <div class="preview-body">${esc(copy.viber)}</div>
+        </div>
+      </div>
+      <div class="approve-row">
+        <button class="approve-btn" onclick="approve(${c.id}, this)">✓ Odobri i pošalji</button>
+        <span class="approve-error" id="approve-error-${c.id}"></span>
+      </div>`
+  }
+
   function renderCampaigns(campaigns) {
     const list = document.getElementById('campaigns-list')
 
@@ -259,6 +362,7 @@
     }
 
     list.innerHTML = campaigns.map(c => {
+      const isDraft = c.status === 'draft'
       const rate = c.totalSends > 0 ? Math.round((c.totalSent / c.totalSends) * 100) : 0
       const channelHtml = CHANNELS.map(ch => {
         const d = c.byChannel[ch] || { sent: 0, failed: 0 }
@@ -273,22 +377,60 @@
           </div>`
       }).join('')
 
+      const badgeHtml = isDraft
+        ? `<div class="draft-badge">DRAFT</div>`
+        : `<div class="success-badge ${successClass(rate)}">${c.totalSends > 0 ? rate + '%' : '—'}</div>`
+
+      const detailSelector = isDraft ? '.draft-preview' : '.channel-breakdown'
+      const detailHtml = isDraft
+        ? draftPreviewHtml(c)
+        : `<div class="channel-breakdown">${channelHtml}</div>`
+
       return `
-        <div class="campaign-card">
-          <div class="campaign-header" onclick="this.parentElement.querySelector('.channel-breakdown').classList.toggle('hidden')">
+        <div class="campaign-card${isDraft ? ' draft' : ''}">
+          <div class="campaign-header" onclick="this.parentElement.querySelector('${detailSelector}').classList.toggle('hidden')">
             <div>
-              <div class="campaign-title">${c.productTitle || c.productId}</div>
+              <div class="campaign-title">${esc(c.productTitle || c.productId)}</div>
               <div class="campaign-date">${formatDate(c.createdAt)}</div>
             </div>
             <div class="campaign-sends">
               <div class="sends-count">${c.totalSends}</div>
               <div class="sends-label">poruka</div>
             </div>
-            <div class="success-badge ${successClass(rate)}">${c.totalSends > 0 ? rate + '%' : '—'}</div>
+            ${badgeHtml}
           </div>
-          <div class="channel-breakdown">${channelHtml}</div>
+          ${detailHtml}
         </div>`
     }).join('')
+  }
+
+  async function approve(id, btn) {
+    const err = document.getElementById('approve-error-' + id)
+    if (err) err.textContent = ''
+    const original = btn.textContent
+    btn.disabled = true
+    btn.textContent = 'Slanje...'
+
+    const headers = {}
+    if (secret) headers['x-secret'] = secret
+
+    try {
+      const res = await fetch('/api/approve?id=' + encodeURIComponent(id), { method: 'POST', headers })
+      if (!res.ok) {
+        let msg = 'Greška pri slanju.'
+        try {
+          const data = await res.json()
+          if (data && data.error) msg = data.error
+        } catch {}
+        throw new Error(msg)
+      }
+      // Success: reload so the campaign now shows sent counts.
+      await loadData()
+    } catch (e) {
+      if (err) err.textContent = e.message || 'Greška pri slanju.'
+      btn.disabled = false
+      btn.textContent = original
+    }
   }
 
   async function loadData() {
