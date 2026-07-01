@@ -1,11 +1,15 @@
 import config from '../config.js'
-import { infobipFetch, normalizePhone } from './infobip.js'
+import { infobipFetch, normalizePhone, testPhone } from './infobip.js'
 
 // WhatsApp Business requires pre-approved templates for all outbound messages.
-// Free trial: sender=447860088970, template=test_whatsapp_template_en, fixed recipient only.
-// Production: register your own number + create Serbian marketing templates in Infobip.
+// The geezer_marketing template must be approved by Meta via Infobip before
+// messages are delivered — Infobip accepts the call but WhatsApp rejects unnapproved templates.
 export async function sendWhatsApp(to: string, message: string): Promise<void> {
-  const recipient = config.TEST_RECIPIENT_WHATSAPP || normalizePhone(to)
+  // Fall back to TEST_RECIPIENT_PHONE if the WhatsApp-specific override isn't set.
+  const testRecipient = config.TEST_RECIPIENT_WHATSAPP
+    ? normalizePhone(config.TEST_RECIPIENT_WHATSAPP)
+    : testPhone()
+  const recipient = testRecipient ?? normalizePhone(to)
 
   if (!config.INFOBIP_API_KEY || !config.INFOBIP_WHATSAPP_SENDER) {
     console.log(`[whatsapp:mock] to=${recipient}`)
@@ -24,7 +28,7 @@ export async function sendWhatsApp(to: string, message: string): Promise<void> {
     }],
   })
 
-  if (config.TEST_RECIPIENT_WHATSAPP) {
+  if (testRecipient) {
     console.log(`[whatsapp:test] sent to ${recipient} (real recipient: ${to})`)
   }
 }
