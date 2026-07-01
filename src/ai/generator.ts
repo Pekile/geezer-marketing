@@ -2,7 +2,9 @@ import Anthropic from '@anthropic-ai/sdk'
 import config from '../config.js'
 import type { ShopifyCustomer, ShopifyProduct } from '../shopify/types.js'
 
-const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY })
+// 30s timeout per API call — if Anthropic is slow or rate-limiting, fail fast
+// rather than hanging the Vercel function until its 300s hard limit.
+const client = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY, timeout: 30_000 })
 
 export interface CampaignCopy {
   email: { subject: string; body: string }

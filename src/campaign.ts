@@ -3,6 +3,7 @@ import { generateCampaignCopyBatch } from './ai/generator.js'
 import { db } from './db/client.js'
 import { campaignSends, campaigns } from './db/schema.js'
 import { getOptedInCustomers, getProduct } from './shopify/client.js'
+import config from './config.js'
 import type { ShopifyProduct } from './shopify/types.js'
 
 export type CustomerCopy = {
@@ -79,11 +80,14 @@ export async function generateCopiesForCampaign(campaignId: number): Promise<num
   const product = await getProduct(campaign.productId)
   console.log(`[campaign] Generating copy for "${product.title}" (campaign ${campaignId})`)
 
-  const customers = await getOptedInCustomers()
-  console.log(`[campaign] ${customers.length} customers — generating copy in batches...`)
+  const allCustomers = await getOptedInCustomers()
 
-  // Generate copy for 5 customers per Claude call, 2 calls at a time.
-  // Lower concurrency avoids Anthropic rate limits that cause timeouts.
+  // In test mode generate copy for only 5 customers — the dashboard preview shows
+  // one, and approve only sends to 1 test recipient anyway.
+  const isTestMode = !!(config.TEST_RECIPIENT_EMAIL || config.TEST_RECIPIENT_PHONE)
+  const customers = isTestMode ? allCustomers.slice(0, 5) : allCustomers
+  console.log(`[campaign] ${customers.length}${isTestMode ? ` (test mode, of ${allCustomers.length})` : ''} customers — generating copy...`)
+
   const CLAUDE_BATCH_SIZE = 5
   const CLAUDE_CONCURRENCY = 2
   const claudeBatches = []
