@@ -311,8 +311,12 @@
 <script>
   const CHANNELS = ['email', 'sms', 'whatsapp', 'viber']
   const CHANNEL_LABELS = { email: 'Email', sms: 'SMS', whatsapp: 'WhatsApp', viber: 'Viber' }
-  // Tracks IDs we've already attempted this session so we never trigger infinite retries.
+  // generationAttempted: IDs currently being generated (in-flight this session).
   const generationAttempted = new Set()
+  // generationFailed: IDs that failed 2+ times this session — no more auto-retries.
+  const generationFailed = new Set()
+  // generationRetries: how many times each ID has failed this session.
+  const generationRetries = {}
 
   let secret = localStorage.getItem('geezer_secret') || ''
 
@@ -385,8 +389,15 @@
 
   function needsGeneration(c) {
     if (generationAttempted.has(c.id)) return false
+    if (generationFailed.has(c.id)) return false  // permanent client-side failure
     if (c.status === 'error' || c.status === 'sent') return false
     return c.status === 'pending' || !c.copy
+  }
+
+  function retryGeneration(id) {
+    generationFailed.delete(id)
+    generationRetries[id] = 0
+    loadData()
   }
 
   function renderCampaigns(campaigns) {
@@ -403,11 +414,13 @@
     }
 
     list.innerHTML = campaigns.map(c => {
-      // Also show spinner if we already triggered generation this session but the
-      // DB hasn't flipped to draft yet (e.g. user clicked Osveži mid-generation).
+      // Show spinner if in-flight (generationAttempted has it, not permanently failed).
       const isGeneratingInProgress = generationAttempted.has(c.id)
+        && !generationFailed.has(c.id)
         && c.status !== 'draft' && c.status !== 'sent' && c.status !== 'error'
       const isGenerating = needsGeneration(c) || isGeneratingInProgress
+      // Show client-side error if we gave up retrying (Vercel timeout, etc.)
+      const isClientFailed = generationFailed.has(c.id) && c.status === 'pending'
       const isDraft = c.status === 'draft' && !!c.copy
       const rate = c.totalSends > 0 ? Math.round((c.totalSent / c.totalSends) * 100) : 0
       const channelHtml = CHANNELS.map(ch => {
@@ -424,11 +437,15 @@
       }).join('')
 
       let badgeHtml, detailHtml, detailSelector, cardClass
-      if (c.status === 'error') {
-        let errMsg = 'Greška pri generisanju kopije.'
-        try { const p = JSON.parse(c.copy || '{}'); if (p._error) errMsg = p._error } catch {}
+      if (c.status === 'error' || isClientFailed) {
+        let errMsg = isClientFailed
+          ? 'Generisanje nije uspelo (verovatno vremenski limit). Klikni Pokušaj ponovo.'
+          : 'Greška pri generisanju kopije.'
+        if (!isClientFailed) {
+          try { const p = JSON.parse(c.copy || '{}'); if (p._error) errMsg = p._error } catch {}
+        }
         badgeHtml = `<div class="error-badge">GREŠKA</div>`
-        detailHtml = `<div class="generating-row" style="color:var(--red)">${esc(errMsg)}</div>`
+        detailHtml = `<div class="generating-row" style="color:var(--red)">${esc(errMsg)}${isClientFailed ? ` <button class="approve-btn" style="margin-left:12px;padding:5px 12px;font-size:12px" onclick="retryGeneration(${c.id})">Pokušaj ponovo</button>` : ''}</div>`
         detailSelector = '.generating-row'
         cardClass = ''
       } else if (isGenerating) {
@@ -550,12 +567,19 @@
       const pending = data.campaigns.filter(needsGeneration)
       if (pending.length > 0) {
         Promise.all(pending.map(async c => {
-          generationAttempted.add(c.id) // mark before attempting — prevents retry on failure
+          generationAttempted.add(c.id)
           const statusEl = document.getElementById('gen-status-' + c.id)
           try {
             await generateCopy(c.id)
             if (statusEl) statusEl.textContent = 'Kopija generisana — učitavam...'
           } catch (e) {
+            // Release from in-flight set so the next loadData() can decide what to do.
+            generationAttempted.delete(c.id)
+            generationRetries[c.id] = (generationRetries[c.id] || 0) + 1
+            if (generationRetries[c.id] >= 2) {
+              // Two failures: stop auto-retrying, show manual retry button.
+              generationFailed.add(c.id)
+            }
             if (statusEl) statusEl.textContent = 'Greška: ' + (e.message || 'nepoznata greška')
           }
         })).then(() => {

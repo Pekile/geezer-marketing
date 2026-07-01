@@ -82,10 +82,10 @@ export async function generateCopiesForCampaign(campaignId: number): Promise<num
   const customers = await getOptedInCustomers()
   console.log(`[campaign] ${customers.length} customers — generating copy in batches...`)
 
-  // Generate copy for 8 customers per Claude call, 5 calls at a time.
-  // orders_count comes from the customer list fetch (no extra Shopify API calls needed).
-  const CLAUDE_BATCH_SIZE = 8
-  const CLAUDE_CONCURRENCY = 5
+  // Generate copy for 5 customers per Claude call, 2 calls at a time.
+  // Lower concurrency avoids Anthropic rate limits that cause timeouts.
+  const CLAUDE_BATCH_SIZE = 5
+  const CLAUDE_CONCURRENCY = 2
   const claudeBatches = []
   for (let i = 0; i < customers.length; i += CLAUDE_BATCH_SIZE) {
     claudeBatches.push(customers.slice(i, i + CLAUDE_BATCH_SIZE))
