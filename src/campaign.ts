@@ -132,6 +132,10 @@ export async function generateCopiesForCampaign(campaignId: number): Promise<num
     console.log(`[campaign] wave ${Math.floor(i / CLAUDE_CONCURRENCY) + 1}/${Math.ceil(claudeBatches.length / CLAUDE_CONCURRENCY)} done — ${drafts.length} copies so far`)
   }
 
+  if (drafts.length === 0) {
+    throw new Error('No copy was generated — all Claude batches failed. Check Anthropic API key and rate limits.')
+  }
+
   await db
     .update(campaigns)
     .set({ copy: JSON.stringify(drafts), status: 'draft' })
