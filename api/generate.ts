@@ -33,6 +33,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[generate] error:', err)
+    // Mark campaign as error so the dashboard doesn't retry it on every load.
+    try {
+      const { db } = await import('../src/db/client.js')
+      const { campaigns } = await import('../src/db/schema.js')
+      const { eq } = await import('drizzle-orm')
+      await db.update(campaigns)
+        .set({ status: 'error', copy: JSON.stringify({ _error: msg }) })
+        .where(eq(campaigns.id, id))
+    } catch { /* best-effort */ }
     res.status(500).json({ ok: false, error: msg })
   }
 }

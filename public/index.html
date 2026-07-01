@@ -178,6 +178,12 @@
     .approve-btn:disabled { opacity: 0.6; cursor: default; }
     .approve-error { color: var(--red); font-size: 13px; }
 
+    /* ERROR badge */
+    .error-badge {
+      padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 700;
+      background: rgba(239,68,68,0.15); color: var(--red);
+    }
+
     /* PENDING / GENERATING badge */
     .pending-badge {
       padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 700;
@@ -295,6 +301,8 @@
 <script>
   const CHANNELS = ['email', 'sms', 'whatsapp', 'viber']
   const CHANNEL_LABELS = { email: 'Email', sms: 'SMS', whatsapp: 'WhatsApp', viber: 'Viber' }
+  // Tracks IDs we've already attempted this session so we never trigger infinite retries.
+  const generationAttempted = new Set()
 
   let secret = localStorage.getItem('geezer_secret') || ''
 
@@ -365,9 +373,10 @@
       </div>`
   }
 
-  // A campaign needs copy generation when it has no copy yet.
   function needsGeneration(c) {
-    return c.status === 'pending' || (c.status !== 'sent' && !c.copy)
+    if (generationAttempted.has(c.id)) return false
+    if (c.status === 'error' || c.status === 'sent') return false
+    return c.status === 'pending' || !c.copy
   }
 
   function renderCampaigns(campaigns) {
@@ -401,7 +410,14 @@
       }).join('')
 
       let badgeHtml, detailHtml, detailSelector, cardClass
-      if (isGenerating) {
+      if (c.status === 'error') {
+        let errMsg = 'Greška pri generisanju kopije.'
+        try { const p = JSON.parse(c.copy || '{}'); if (p._error) errMsg = p._error } catch {}
+        badgeHtml = `<div class="error-badge">GREŠKA</div>`
+        detailHtml = `<div class="generating-row" style="color:var(--red)">${esc(errMsg)}</div>`
+        detailSelector = '.generating-row'
+        cardClass = ''
+      } else if (isGenerating) {
         badgeHtml = `<div class="pending-badge"><div class="pending-spinner"></div>Generisanje...</div>`
         detailHtml = `<div class="generating-row" id="gen-status-${c.id}">Generisanje personalizovane kopije za sve kupce... (može potrajati ~30s)</div>`
         detailSelector = '.generating-row'
@@ -505,10 +521,11 @@
       const pending = data.campaigns.filter(needsGeneration)
       if (pending.length > 0) {
         Promise.all(pending.map(async c => {
+          generationAttempted.add(c.id) // mark before attempting — prevents retry on failure
           const statusEl = document.getElementById('gen-status-' + c.id)
           try {
             await generateCopy(c.id)
-            if (statusEl) statusEl.textContent = 'Kopija generisana — osvežite stranicu za pregled.'
+            if (statusEl) statusEl.textContent = 'Kopija generisana — učitavam...'
           } catch (e) {
             if (statusEl) statusEl.textContent = 'Greška: ' + (e.message || 'nepoznata greška')
           }
