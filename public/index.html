@@ -390,7 +390,7 @@
   function needsGeneration(c) {
     if (generationAttempted.has(c.id)) return false
     if (generationFailed.has(c.id)) return false  // permanent client-side failure
-    if (c.status === 'error' || c.status === 'sent') return false
+    if (c.status === 'error' || c.status === 'send_failed' || c.status === 'sent') return false
     return c.status === 'pending' || !c.copy
   }
 
@@ -417,7 +417,7 @@
       // Show spinner if in-flight (generationAttempted has it, not permanently failed).
       const isGeneratingInProgress = generationAttempted.has(c.id)
         && !generationFailed.has(c.id)
-        && c.status !== 'draft' && c.status !== 'sent' && c.status !== 'error'
+        && c.status !== 'draft' && c.status !== 'sent' && c.status !== 'error' && c.status !== 'send_failed'
       const isGenerating = needsGeneration(c) || isGeneratingInProgress
       // Show client-side error if we gave up retrying (Vercel timeout, etc.)
       const isClientFailed = generationFailed.has(c.id) && c.status === 'pending'
@@ -448,6 +448,18 @@
         detailHtml = `<div class="generating-row" style="color:var(--red)">${esc(errMsg)}${isClientFailed ? ` <button class="approve-btn" style="margin-left:12px;padding:5px 12px;font-size:12px" onclick="retryGeneration(${c.id})">Pokušaj ponovo</button>` : ''}</div>`
         detailSelector = '.generating-row'
         cardClass = ''
+      } else if (c.status === 'send_failed') {
+        // Dispatch failed (not copy generation) — the copy is intact, so offer a
+        // straight re-approve/retry rather than the "copy generation error" path.
+        badgeHtml = `<div class="error-badge">SLANJE NEUSPEŠNO</div>`
+        detailHtml = `
+          <div class="approve-row">
+            <div class="approve-error" style="flex:1">Slanje nije uspelo — nijedna poruka nije poslata. Klikni da pokušaš ponovo.</div>
+            <button class="approve-btn" onclick="approve(${c.id}, this)">✓ Pošalji ponovo</button>
+            <span class="approve-error" id="approve-error-${c.id}"></span>
+          </div>`
+        detailSelector = '.approve-row'
+        cardClass = ' draft'
       } else if (isGenerating) {
         badgeHtml = `<div class="pending-badge"><div class="pending-spinner"></div>Generisanje...</div>`
         detailHtml = `<div class="generating-row" id="gen-status-${c.id}">Generisanje personalizovane kopije za sve kupce... (može potrajati ~30s)</div>`
