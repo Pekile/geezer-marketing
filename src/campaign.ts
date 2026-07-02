@@ -3,6 +3,10 @@ import { generateCampaignCopyBatch } from './ai/generator.js'
 import { db } from './db/client.js'
 import { campaignSends, campaigns } from './db/schema.js'
 import { getOptedInCustomers, getProduct } from './shopify/client.js'
+import { sendEmail } from './channels/email.js'
+import { sendSms } from './channels/sms.js'
+import { sendViber } from './channels/viber.js'
+import { sendWhatsApp } from './channels/whatsapp.js'
 import config from './config.js'
 import type { ShopifyProduct } from './shopify/types.js'
 
@@ -18,10 +22,42 @@ export type CustomerCopy = {
   viber: string
 }
 
+export type Channel = 'email' | 'sms' | 'whatsapp' | 'viber'
+
+/**
+ * The single source of truth for the channel fan-out rule: which channels a
+ * given customer copy should be dispatched on, and the send call for each.
+ *
+ * The rule — "email if there's an email address; sms/whatsapp/viber if there's
+ * a phone number" — must be expressed exactly once so the draft-build and
+ * dispatch paths can never silently diverge (e.g. when a channel is added or
+ * the "has phone ⇒ three channels" rule changes). Both the count and the
+ * dispatch are driven from this list.
+ */
+export function channelsFor(
+  copy: CustomerCopy,
+): Array<{ channel: Channel; fn: () => Promise<void> }> {
+  const channels: Array<{ channel: Channel; fn: () => Promise<void> }> = []
+
+  if (copy.email) {
+    const email = copy.email
+    channels.push({ channel: 'email', fn: () => sendEmail(email, copy.email_subject, copy.email_body) })
+  }
+
+  if (copy.phone) {
+    const phone = copy.phone
+    channels.push({ channel: 'sms', fn: () => sendSms(phone, copy.sms) })
+    channels.push({ channel: 'whatsapp', fn: () => sendWhatsApp(phone, copy.whatsapp) })
+    channels.push({ channel: 'viber', fn: () => sendViber(phone, copy.viber) })
+  }
+
+  return channels
+}
+
 export async function logSend(
   campaignId: number,
   customerId: string,
-  channel: 'email' | 'sms' | 'whatsapp' | 'viber',
+  channel: Channel,
   fn: () => Promise<void>,
 ): Promise<void> {
   try {

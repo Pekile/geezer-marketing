@@ -31,8 +31,17 @@ vi.mock('../src/channels/viber.js', () => ({ sendViber: (...a: unknown[]) => sen
 
 // logSend is the real helper's contract: run the send fn. We mock it to just
 // invoke the fn so we observe which channels fired without touching the DB.
+// `channelsFor` (the fan-out rule) is kept as the real implementation so the
+// handler drives dispatch from the single source of truth; it calls the mocked
+// channel senders above.
 const logSend = vi.fn(async (_c: number, _id: string, _ch: string, fn: () => Promise<void>) => { await fn() })
-vi.mock('../src/campaign.js', () => ({ logSend: (...a: unknown[]) => (logSend as (...x: unknown[]) => Promise<void>)(...a) }))
+vi.mock('../src/campaign.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/campaign.js')>()
+  return {
+    ...actual,
+    logSend: (...a: unknown[]) => (logSend as (...x: unknown[]) => Promise<void>)(...a),
+  }
+})
 
 // config: no DASHBOARD_SECRET so auth is skipped.
 vi.mock('../src/config.js', () => ({ default: { DASHBOARD_SECRET: '' } }))

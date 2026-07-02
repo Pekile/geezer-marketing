@@ -110,7 +110,8 @@ vi.mock('./shopify/client.js', () => ({
   getProduct: () => getProduct(),
 }))
 
-import { generateCopiesForCampaign, recordCampaign } from './campaign.js'
+import { channelsFor, generateCopiesForCampaign, recordCampaign } from './campaign.js'
+import type { CustomerCopy } from './campaign.js'
 import { campaigns } from './db/schema.js'
 import type { ShopifyProduct } from './shopify/types.js'
 
@@ -175,6 +176,56 @@ describe('recordCampaign idempotency', () => {
     expect(second).toBeNull()
 
     expect(insertValues).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('channelsFor — the single channel fan-out rule', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  function copy(overrides: Partial<CustomerCopy> = {}): CustomerCopy {
+    return {
+      customerId: '1',
+      firstName: 'Marko',
+      email: 'marko@example.com',
+      phone: '+38160111',
+      email_subject: 'S',
+      email_body: 'B',
+      sms: 'sms',
+      whatsapp: 'wa',
+      viber: 'vb',
+      ...overrides,
+    }
+  }
+
+  it('fans out to all four channels when both email and phone are present', () => {
+    const channels = channelsFor(copy())
+    expect(channels.map(c => c.channel)).toEqual(['email', 'sms', 'whatsapp', 'viber'])
+  })
+
+  it('emits only email when there is no phone', () => {
+    const channels = channelsFor(copy({ phone: null }))
+    expect(channels.map(c => c.channel)).toEqual(['email'])
+  })
+
+  it('emits the three phone channels when there is no email', () => {
+    const channels = channelsFor(copy({ email: null }))
+    expect(channels.map(c => c.channel)).toEqual(['sms', 'whatsapp', 'viber'])
+  })
+
+  it('emits nothing when the customer has neither email nor phone', () => {
+    expect(channelsFor(copy({ email: null, phone: null }))).toEqual([])
+  })
+
+  it('wires each channel to its own send function with the copy content', async () => {
+    const channels = channelsFor(copy())
+    await Promise.all(channels.map(c => c.fn()))
+
+    expect(sendEmail).toHaveBeenCalledTimes(1)
+    expect(sendSms).toHaveBeenCalledTimes(1)
+    expect(sendWhatsApp).toHaveBeenCalledTimes(1)
+    expect(sendViber).toHaveBeenCalledTimes(1)
   })
 })
 
