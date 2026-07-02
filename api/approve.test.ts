@@ -122,7 +122,7 @@ describe('POST /api/approve', () => {
     // Status flipped to 'sent'.
     expect(updateSet).toHaveBeenCalledWith({ status: 'sent' })
 
-    expect(res._json).toEqual({ ok: true, sent: 2, testMode: false })
+    expect(res._json).toEqual({ ok: true, dispatched: 2, testMode: false })
   })
 
   it('leaves the campaign in send_failed and returns ok:false when every send fails', async () => {
@@ -141,7 +141,7 @@ describe('POST /api/approve', () => {
     expect(updateSet).toHaveBeenCalledWith({ status: 'send_failed' })
     expect(updateSet).not.toHaveBeenCalledWith({ status: 'sent' })
     expect(updateSet).not.toHaveBeenCalledWith({ status: 'error' })
-    expect(res._json).toEqual({ ok: false, sent: 2, testMode: false })
+    expect(res._json).toEqual({ ok: false, dispatched: 2, testMode: false })
   })
 
   it('still marks the campaign sent when at least one send succeeds (partial failure)', async () => {
@@ -155,7 +155,7 @@ describe('POST /api/approve', () => {
     await handler(mockReq('POST', '1'), res)
 
     expect(updateSet).toHaveBeenCalledWith({ status: 'sent' })
-    expect(res._json).toEqual({ ok: true, sent: 2, testMode: false })
+    expect(res._json).toEqual({ ok: true, dispatched: 2, testMode: false })
   })
 
   it('returns 400 when stored copy is not valid JSON', async () => {

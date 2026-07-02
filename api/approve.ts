@@ -16,8 +16,9 @@ import config from '../src/config.js'
  * Approves a draft campaign: parses the copy that was stored when the draft was
  * created, dispatches it across every channel via the shared `logSend` helper
  * (so `campaign_sends` rows are written exactly as a direct send would), and
- * flips the campaign to `'sent'`. Returns `{ ok: true, sent: N }` where N is the
- * number of customers the campaign was dispatched to.
+ * flips the campaign to `'sent'`. Returns `{ ok: true, dispatched: N }` where N is the
+ * number of customers dispatched to — not the count of individual channel messages
+ * successfully delivered (per-channel outcomes live in `campaign_sends`).
  *
  * If every channel send throws (a fully-failed dispatch), the campaign is left in
  * `'send_failed'` instead of `'sent'` so it can be re-approved without a manual DB
@@ -121,5 +122,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     .set({ status: fullyFailed ? 'send_failed' : 'sent' })
     .where(eq(campaigns.id, campaign.id))
 
-  res.json({ ok: !fullyFailed, sent: toSend.length, testMode: isTestMode })
+  res.json({ ok: !fullyFailed, dispatched: toSend.length, testMode: isTestMode })
 }
