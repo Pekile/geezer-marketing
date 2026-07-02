@@ -3,17 +3,29 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // --- db client mock ---------------------------------------------------------
 let existingRows: { id: number }[] = []
 let campaignRows: Array<{ id: number; productId: string; status: string; copy: string | null }> = []
+// When true, an ON CONFLICT DO NOTHING insert hits the unique constraint and
+// returns no rows (the product was already campaigned).
+let insertConflicts = false
 
 const limit = vi.fn(async () => existingRows)
 const where = vi.fn(() => ({ limit }))
 const from = vi.fn(() => ({ where }))
 const select = vi.fn(() => ({ from }))
 
-const insertReturning = vi.fn(async () => [{ id: existingRows.length + 1 }])
-const insertValues = vi.fn((_vals: unknown) => {
-  existingRows.push({ id: existingRows.length + 1 })
-  return { returning: insertReturning }
+// Mirrors ON CONFLICT DO NOTHING ... RETURNING against the productId unique
+// constraint: an insert of a productId already present returns no rows (the
+// conflict path), a first-time insert returns the new row.
+const insertReturning = vi.fn(async () => {
+  if (insertConflicts) return []
+  const id = existingRows.length + 1
+  existingRows.push({ id })
+  return [{ id }]
 })
+const insertOnConflict = vi.fn((_target: unknown) => ({ returning: insertReturning }))
+const insertValues = vi.fn((_vals: unknown) => ({
+  onConflictDoNothing: insertOnConflict,
+  returning: insertReturning,
+}))
 
 function tableName(table: unknown): string {
   const sym = Object.getOwnPropertySymbols(table as object).find(
@@ -97,20 +109,19 @@ describe('recordCampaign idempotency', () => {
     existingRows = []
     campaignRows = []
     recordedSends.length = 0
+    insertConflicts = false
   })
 
-  it('skips when product already has a campaign', async () => {
-    existingRows = [{ id: 1 }]
+  it('skips (returns null) when the insert conflicts on the productId unique constraint', async () => {
+    // The row already exists: ON CONFLICT DO NOTHING returns no rows.
+    insertConflicts = true
 
     const id = await recordCampaign(product)
 
     expect(id).toBeNull()
-    expect(insert).not.toHaveBeenCalled()
   })
 
   it('inserts a pending campaign row when first-time', async () => {
-    existingRows = []
-
     const id = await recordCampaign(product)
 
     expect(id).not.toBeNull()
@@ -120,15 +131,29 @@ describe('recordCampaign idempotency', () => {
     )
   })
 
-  it('is idempotent — second call with same product returns null', async () => {
-    existingRows = []
+  it('lets the DB serialize the guard — always inserts with ON CONFLICT DO NOTHING, never a check-then-insert', async () => {
+    await recordCampaign(product)
 
-    const first = await recordCampaign(product)
-    const second = await recordCampaign(product)
-
-    expect(first).not.toBeNull()
-    expect(second).toBeNull()
+    // The insert is unconditional; the unique constraint is the source of truth.
     expect(insertValues).toHaveBeenCalledTimes(1)
+    expect(insertOnConflict).toHaveBeenCalledTimes(1)
+    expect(insertOnConflict).toHaveBeenCalledWith(
+      expect.objectContaining({ target: expect.anything() }),
+    )
+  })
+
+  it('is idempotent — a concurrent second delivery of the same product returns null', async () => {
+    // First delivery wins the insert.
+    const first = await recordCampaign(product)
+    expect(first).not.toBeNull()
+
+    // Second delivery hits the unique constraint and is absorbed as a skip
+    // rather than throwing an uncaught unique violation.
+    insertConflicts = true
+    const second = await recordCampaign(product)
+    expect(second).toBeNull()
+
+    expect(insertValues).toHaveBeenCalledTimes(2)
   })
 })
 

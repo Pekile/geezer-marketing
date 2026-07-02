@@ -43,22 +43,23 @@ export async function logSend(
 export async function recordCampaign(product: ShopifyProduct): Promise<number | null> {
   const productId = product.id.toString()
 
-  const existing = await db
-    .select({ id: campaigns.id })
-    .from(campaigns)
-    .where(eq(campaigns.productId, productId))
-    .limit(1)
+  // The `campaigns.productId` unique constraint is the source of truth for
+  // "campaign this product once." Insert with ON CONFLICT DO NOTHING so two
+  // concurrent product/create deliveries serialize at the DB: exactly one wins
+  // the insert and gets a returned row; the loser gets an empty `returning()`
+  // and is treated as a clean skip rather than an unhandled unique violation.
+  const inserted = await db
+    .insert(campaigns)
+    .values({ productId, productTitle: product.title, status: 'pending' })
+    .onConflictDoNothing({ target: campaigns.productId })
+    .returning({ id: campaigns.id })
 
-  if (existing.length > 0) {
-    console.log(`[campaign] Already recorded "${product.title}" (id=${existing[0].id})`)
+  if (inserted.length === 0) {
+    console.log(`[campaign] Already recorded "${product.title}" (product ${productId})`)
     return null
   }
 
-  const [campaign] = await db
-    .insert(campaigns)
-    .values({ productId, productTitle: product.title, status: 'pending' })
-    .returning({ id: campaigns.id })
-
+  const [campaign] = inserted
   console.log(`[campaign] Recorded "${product.title}" (id=${campaign.id}) — pending copy generation`)
   return campaign.id
 }
