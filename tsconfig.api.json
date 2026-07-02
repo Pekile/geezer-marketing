@@ -1,0 +1,21 @@
+{
+  // Typecheck-only config for the Vercel `api/` handlers.
+  //
+  // The main tsconfig.json sets `rootDir: "./src"` and `include: ["src/**/*"]`
+  // so `npm run build` (tsc) emits the src tree to `dist/`. That deliberately
+  // leaves the `api/` handlers outside the compiled program, so a type error in
+  // an `api/` handler would slip past the gate (see issue #19).
+  //
+  // This config extends the base compiler options but drops `rootDir` (the
+  // handlers live in `api/` and import from `../src`, spanning two roots) and
+  // forces `noEmit`, so it only ever type-checks. It is wired into the
+  // `typecheck` npm script so the gate now covers `api/` too.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "outDir": null
+  },
+  "include": ["api/**/*", "src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
