@@ -19,10 +19,10 @@ vi.mock('../src/db/client.js', () => ({
 }))
 
 // --- channel + logSend mocks ------------------------------------------------
-const sendEmail = vi.fn(async () => undefined)
-const sendSms = vi.fn(async () => undefined)
-const sendWhatsApp = vi.fn(async () => undefined)
-const sendViber = vi.fn(async () => undefined)
+const sendEmail = vi.fn(async (..._a: unknown[]) => undefined)
+const sendSms = vi.fn(async (..._a: unknown[]) => undefined)
+const sendWhatsApp = vi.fn(async (..._a: unknown[]) => undefined)
+const sendViber = vi.fn(async (..._a: unknown[]) => undefined)
 
 vi.mock('../src/channels/email.js', () => ({ sendEmail: (...a: unknown[]) => sendEmail(...a) }))
 vi.mock('../src/channels/sms.js', () => ({ sendSms: (...a: unknown[]) => sendSms(...a) }))
