@@ -18,6 +18,11 @@ import config from '../src/config.js'
  * (so `campaign_sends` rows are written exactly as a direct send would), and
  * flips the campaign to `'sent'`. Returns `{ ok: true, sent: N }` where N is the
  * number of customers the campaign was dispatched to.
+ *
+ * If every channel send throws (a fully-failed dispatch), the campaign is left in
+ * `'error'` instead of `'sent'` so it can be re-approved without a manual DB edit;
+ * the response then carries `ok: false`. A partially-failed dispatch (at least one
+ * send succeeded) is still treated as `'sent'`, matching the existing contract.
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*')
@@ -71,6 +76,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const isTestMode = !!(config.TEST_RECIPIENT_EMAIL || config.TEST_RECIPIENT_PHONE)
   const toSend = isTestMode ? drafts.slice(0, 1) : drafts
 
+  // Track dispatch outcomes across every channel of every customer so a
+  // fully-failed dispatch is distinguishable from a successful (or partial) one.
+  let attempted = 0
+  let succeeded = 0
+
   for (const draft of toSend) {
     const sends: Promise<void>[] = []
 
@@ -89,13 +99,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         () => sendViber(phone, draft.viber)))
     }
 
-    await Promise.allSettled(sends)
+    const results = await Promise.allSettled(sends)
+    attempted += results.length
+    succeeded += results.filter(r => r.status === 'fulfilled').length
   }
+
+  // A fully-failed dispatch (sends were attempted and every one threw) must not
+  // masquerade as 'sent' — that would trip the already-sent guard above and make
+  // the campaign un-retryable without a manual DB edit. Leave it in 'error'.
+  // When no sends were attempted at all, nothing failed, so 'sent' still holds.
+  const fullyFailed = attempted > 0 && succeeded === 0
 
   await db
     .update(campaigns)
-    .set({ status: 'sent' })
+    .set({ status: fullyFailed ? 'error' : 'sent' })
     .where(eq(campaigns.id, campaign.id))
 
-  res.json({ ok: true, sent: toSend.length, testMode: isTestMode })
+  res.json({ ok: !fullyFailed, sent: toSend.length, testMode: isTestMode })
 }

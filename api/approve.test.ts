@@ -70,6 +70,12 @@ describe('POST /api/approve', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     campaignRow = undefined
+    // clearAllMocks resets call history but not implementations, so restore the
+    // channel mocks to their default "succeeds" behaviour between tests.
+    sendEmail.mockResolvedValue(undefined)
+    sendSms.mockResolvedValue(undefined)
+    sendWhatsApp.mockResolvedValue(undefined)
+    sendViber.mockResolvedValue(undefined)
   })
 
   it('rejects non-POST methods with 405', async () => {
@@ -116,6 +122,37 @@ describe('POST /api/approve', () => {
     // Status flipped to 'sent'.
     expect(updateSet).toHaveBeenCalledWith({ status: 'sent' })
 
+    expect(res._json).toEqual({ ok: true, sent: 2, testMode: false })
+  })
+
+  it('leaves the campaign in error and returns ok:false when every send fails', async () => {
+    campaignRow = { id: 1, status: 'draft', copy: draftCopy }
+    // Every channel throws -> logSend rejects for all of them.
+    sendEmail.mockRejectedValue(new Error('email down'))
+    sendSms.mockRejectedValue(new Error('sms down'))
+    sendWhatsApp.mockRejectedValue(new Error('wa down'))
+    sendViber.mockRejectedValue(new Error('viber down'))
+
+    const res = mockRes()
+    await handler(mockReq('POST', '1'), res)
+
+    // Status must NOT flip to 'sent' — it goes to 'error' so it can be re-approved.
+    expect(updateSet).toHaveBeenCalledWith({ status: 'error' })
+    expect(updateSet).not.toHaveBeenCalledWith({ status: 'sent' })
+    expect(res._json).toEqual({ ok: false, sent: 2, testMode: false })
+  })
+
+  it('still marks the campaign sent when at least one send succeeds (partial failure)', async () => {
+    campaignRow = { id: 1, status: 'draft', copy: draftCopy }
+    // Email succeeds (default mock); only the phone channels throw.
+    sendSms.mockRejectedValue(new Error('sms down'))
+    sendWhatsApp.mockRejectedValue(new Error('wa down'))
+    sendViber.mockRejectedValue(new Error('viber down'))
+
+    const res = mockRes()
+    await handler(mockReq('POST', '1'), res)
+
+    expect(updateSet).toHaveBeenCalledWith({ status: 'sent' })
     expect(res._json).toEqual({ ok: true, sent: 2, testMode: false })
   })
 
