@@ -1,11 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { eq } from 'drizzle-orm'
-import { logSend } from '../src/campaign.js'
+import { channelsFor, logSend } from '../src/campaign.js'
 import type { CustomerCopy } from '../src/campaign.js'
-import { sendEmail } from '../src/channels/email.js'
-import { sendSms } from '../src/channels/sms.js'
-import { sendViber } from '../src/channels/viber.js'
-import { sendWhatsApp } from '../src/channels/whatsapp.js'
 import { db } from '../src/db/client.js'
 import { campaigns } from '../src/db/schema.js'
 import config from '../src/config.js'
@@ -72,22 +68,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const toSend = isTestMode ? drafts.slice(0, 1) : drafts
 
   for (const draft of toSend) {
-    const sends: Promise<void>[] = []
-
-    if (draft.email) {
-      sends.push(logSend(campaign.id, draft.customerId, 'email',
-        () => sendEmail(draft.email as string, draft.email_subject, draft.email_body)))
-    }
-
-    if (draft.phone) {
-      const phone = draft.phone
-      sends.push(logSend(campaign.id, draft.customerId, 'sms',
-        () => sendSms(phone, draft.sms)))
-      sends.push(logSend(campaign.id, draft.customerId, 'whatsapp',
-        () => sendWhatsApp(phone, draft.whatsapp)))
-      sends.push(logSend(campaign.id, draft.customerId, 'viber',
-        () => sendViber(phone, draft.viber)))
-    }
+    // The channel fan-out rule lives once in `channelsFor` (src/campaign.ts);
+    // dispatch is driven from it so this path can't drift from the rule.
+    const sends = channelsFor(draft).map(({ channel, fn }) =>
+      logSend(campaign.id, draft.customerId, channel, fn),
+    )
 
     await Promise.allSettled(sends)
   }
