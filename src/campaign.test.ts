@@ -8,7 +8,7 @@ let campaignRows: Array<{ id: number; productId: string; status: string; copy: s
 let insertConflicts = false
 
 const limit = vi.fn(async () => existingRows)
-const where = vi.fn(() => ({ limit }))
+const where = vi.fn((_predicate: unknown) => ({ limit }))
 const from = vi.fn(() => ({ where }))
 const select = vi.fn(() => ({ from }))
 
@@ -32,6 +32,25 @@ function tableName(table: unknown): string {
     s => s.description === 'drizzle:Name',
   )
   return sym ? String((table as Record<symbol, unknown>)[sym]) : String(table)
+}
+
+/**
+ * Asserts that a drizzle `eq(column, value)` predicate (as passed to the mocked
+ * `where`) actually filters on `column` with the given `value`. A drizzle `eq`
+ * builds an SQL expression whose `queryChunks` hold the column object itself and
+ * a `Param` chunk carrying the bound value — so pinning both catches a regression
+ * that queried the wrong column (e.g. `campaigns.id` instead of `campaigns.productId`).
+ */
+function expectPredicate(predicate: unknown, column: unknown, value: unknown): void {
+  const chunks = (predicate as { queryChunks?: unknown[] })?.queryChunks
+  expect(Array.isArray(chunks), 'where() was not called with a drizzle eq() predicate').toBe(true)
+  // The exact column object appears among the chunks (identity match).
+  expect(chunks).toContain(column)
+  // A Param chunk carries the bound value.
+  const boundValues = (chunks as Array<Record<string, unknown>>)
+    .filter(c => c && typeof c === 'object' && 'value' in c && !('name' in c))
+    .map(c => c.value)
+  expect(boundValues).toContain(value)
 }
 
 const recordedSends: Array<{ channel: string; status: string; errorMessage?: string }> = []
@@ -93,6 +112,7 @@ vi.mock('./shopify/client.js', () => ({
 
 import { channelsFor, generateCopiesForCampaign, recordCampaign } from './campaign.js'
 import type { CustomerCopy } from './campaign.js'
+import { campaigns } from './db/schema.js'
 import type { ShopifyProduct } from './shopify/types.js'
 
 const product: ShopifyProduct = {
@@ -138,8 +158,9 @@ describe('recordCampaign idempotency', () => {
     // The insert is unconditional; the unique constraint is the source of truth.
     expect(insertValues).toHaveBeenCalledTimes(1)
     expect(insertOnConflict).toHaveBeenCalledTimes(1)
+    // Pin the conflict target to campaigns.productId — not campaigns.id or any other column.
     expect(insertOnConflict).toHaveBeenCalledWith(
-      expect.objectContaining({ target: expect.anything() }),
+      expect.objectContaining({ target: campaigns.productId }),
     )
   })
 
