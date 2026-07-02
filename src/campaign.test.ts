@@ -5,7 +5,7 @@ let existingRows: { id: number }[] = []
 let campaignRows: Array<{ id: number; productId: string; status: string; copy: string | null }> = []
 
 const limit = vi.fn(async () => existingRows)
-const where = vi.fn(() => ({ limit }))
+const where = vi.fn((_predicate: unknown) => ({ limit }))
 const from = vi.fn(() => ({ where }))
 const select = vi.fn(() => ({ from }))
 
@@ -20,6 +20,25 @@ function tableName(table: unknown): string {
     s => s.description === 'drizzle:Name',
   )
   return sym ? String((table as Record<symbol, unknown>)[sym]) : String(table)
+}
+
+/**
+ * Asserts that a drizzle `eq(column, value)` predicate (as passed to the mocked
+ * `where`) actually filters on `column` with the given `value`. A drizzle `eq`
+ * builds an SQL expression whose `queryChunks` hold the column object itself and
+ * a `Param` chunk carrying the bound value — so pinning both catches a regression
+ * that queried the wrong column (e.g. `campaigns.id` instead of `campaigns.productId`).
+ */
+function expectPredicate(predicate: unknown, column: unknown, value: unknown): void {
+  const chunks = (predicate as { queryChunks?: unknown[] })?.queryChunks
+  expect(Array.isArray(chunks), 'where() was not called with a drizzle eq() predicate').toBe(true)
+  // The exact column object appears among the chunks (identity match).
+  expect(chunks).toContain(column)
+  // A Param chunk carries the bound value.
+  const boundValues = (chunks as Array<Record<string, unknown>>)
+    .filter(c => c && typeof c === 'object' && 'value' in c && !('name' in c))
+    .map(c => c.value)
+  expect(boundValues).toContain(value)
 }
 
 const recordedSends: Array<{ channel: string; status: string; errorMessage?: string }> = []
@@ -80,6 +99,7 @@ vi.mock('./shopify/client.js', () => ({
 }))
 
 import { generateCopiesForCampaign, recordCampaign } from './campaign.js'
+import { campaigns } from './db/schema.js'
 import type { ShopifyProduct } from './shopify/types.js'
 
 const product: ShopifyProduct = {
@@ -106,6 +126,11 @@ describe('recordCampaign idempotency', () => {
 
     expect(id).toBeNull()
     expect(insert).not.toHaveBeenCalled()
+
+    // The lookup must filter on campaigns.productId with the stringified product id,
+    // not merely "some lookup happened".
+    expect(where).toHaveBeenCalledTimes(1)
+    expectPredicate(where.mock.calls[0][0], campaigns.productId, product.id.toString())
   })
 
   it('inserts a pending campaign row when first-time', async () => {
@@ -118,6 +143,10 @@ describe('recordCampaign idempotency', () => {
     expect(insertValues).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'pending' }),
     )
+
+    // Even on the first-time path the guard must have looked up by productId.
+    expect(where).toHaveBeenCalledTimes(1)
+    expectPredicate(where.mock.calls[0][0], campaigns.productId, product.id.toString())
   })
 
   it('is idempotent — second call with same product returns null', async () => {
