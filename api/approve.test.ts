@@ -125,7 +125,7 @@ describe('POST /api/approve', () => {
     expect(res._json).toEqual({ ok: true, sent: 2, testMode: false })
   })
 
-  it('leaves the campaign in error and returns ok:false when every send fails', async () => {
+  it('leaves the campaign in send_failed and returns ok:false when every send fails', async () => {
     campaignRow = { id: 1, status: 'draft', copy: draftCopy }
     // Every channel throws -> logSend rejects for all of them.
     sendEmail.mockRejectedValue(new Error('email down'))
@@ -136,9 +136,11 @@ describe('POST /api/approve', () => {
     const res = mockRes()
     await handler(mockReq('POST', '1'), res)
 
-    // Status must NOT flip to 'sent' — it goes to 'error' so it can be re-approved.
-    expect(updateSet).toHaveBeenCalledWith({ status: 'error' })
+    // Status must NOT flip to 'sent' — it goes to 'send_failed' so it can be
+    // re-approved, and stays distinct from generate.ts's 'error' (copy failure).
+    expect(updateSet).toHaveBeenCalledWith({ status: 'send_failed' })
     expect(updateSet).not.toHaveBeenCalledWith({ status: 'sent' })
+    expect(updateSet).not.toHaveBeenCalledWith({ status: 'error' })
     expect(res._json).toEqual({ ok: false, sent: 2, testMode: false })
   })
 
