@@ -8,8 +8,8 @@ describe('db client', () => {
 
   it('instantiates the drizzle client without throwing', async () => {
     const { db } = await import('./client.js')
-    // Accessing a query-builder method forces lazy initialisation but does not
-    // dial the database (no query is executed).
+    // The query-builder is available without dialing the database (no query is
+    // executed); postgres() opens no socket until the first query runs.
     expect(typeof db.select).toBe('function')
   })
 })
